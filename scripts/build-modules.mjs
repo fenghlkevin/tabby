@@ -3,6 +3,15 @@ import * as vars from './vars.mjs'
 import log from 'npmlog'
 import webpack from 'webpack'
 import { promisify } from 'node:util'
+import fs from 'node:fs'
+
+// Development launches read this metadata; installers use the same Git version.
+const appManifestPath = new URL('../app/package.json', import.meta.url)
+const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
+if (appManifest.version !== vars.version) {
+    appManifest.version = vars.version
+    fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2) + '\n')
+}
 
 const configs = [
     '../app/webpack.config.main.mjs',

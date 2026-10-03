@@ -4,7 +4,7 @@ import { ConfigProvider, Platform } from 'tabby-core'
 export class TerminalConfigProvider extends ConfigProvider {
     defaults = {
         terminal: {
-            autoOpen: true,
+            autoOpen: false,
             useConPTY: true,
             environment: {},
             setComSpec: false,

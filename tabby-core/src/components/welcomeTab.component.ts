@@ -12,7 +12,7 @@ import { LocaleService } from '../services/locale.service'
     styleUrls: ['./welcomeTab.component.scss'],
 })
 export class WelcomeTabComponent extends BaseTabComponent {
-    enableGlobalHotkey = true
+    enableGlobalHotkey = false
     allLanguages = LocaleService.allLanguages
 
     constructor (
@@ -22,6 +22,7 @@ export class WelcomeTabComponent extends BaseTabComponent {
         injector: Injector,
     ) {
         super(injector)
+        this.enableGlobalHotkey = (config.store.hotkeys['toggle-window']?.length ?? 0) > 0
         this.setTitle(translate.instant('Welcome'))
     }
 
@@ -30,6 +31,8 @@ export class WelcomeTabComponent extends BaseTabComponent {
         this.config.store.pluginBlacklist = []
         if (!this.enableGlobalHotkey) {
             this.config.store.hotkeys['toggle-window'] = []
+        } else if (!this.config.store.hotkeys['toggle-window']?.length) {
+            this.config.store.hotkeys['toggle-window'] = ['Ctrl-Space']
         }
         await this.config.save()
         this.destroy()

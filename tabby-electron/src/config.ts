@@ -5,19 +5,19 @@ export class ElectronConfigProvider extends ConfigProvider {
     platformDefaults = {
         [Platform.macOS]: {
             hotkeys: {
-                'toggle-window': ['Ctrl-Space'],
+                'toggle-window': [],
                 'new-window': ['⌘-N'],
             },
         },
         [Platform.Windows]: {
             hotkeys: {
-                'toggle-window': ['Ctrl-Space'],
+                'toggle-window': [],
                 'new-window': ['Ctrl-Shift-N'],
             },
         },
         [Platform.Linux]: {
             hotkeys: {
-                'toggle-window': ['Ctrl-Space'],
+                'toggle-window': [],
                 'new-window': ['Ctrl-Shift-N'],
             },
         },

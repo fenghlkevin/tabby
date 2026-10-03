@@ -1,4 +1,6 @@
 import { Injectable, Pipe, PipeTransform } from '@angular/core'
+import { resolveSystemLanguage } from './systemLanguage'
+import { PlatformService } from '../api/platform'
 import { formatDate, registerLocaleData } from '@angular/common'
 import { TranslateService, MissingTranslationHandler } from '@ngx-translate/core'
 import { TranslateMessageFormatCompiler } from 'ngx-translate-messageformat-compiler'
@@ -188,6 +190,7 @@ export class LocaleService {
     constructor (
         private config: ConfigService,
         private translate: TranslateService,
+        private platform: PlatformService,
         log: LogService,
     ) {
         this.patchTranslateService(translate)
@@ -227,11 +230,7 @@ export class LocaleService {
     refresh (): void {
         let lang = this.config.store.language
         if (!lang) {
-            for (const systemLanguage of navigator.languages) {
-                if (!lang && LocaleService.allLanguages.some(x => x.code === systemLanguage)) {
-                    lang = systemLanguage
-                }
-            }
+            lang = resolveSystemLanguage(this.platform.getPreferredLanguages(), LocaleService.allLanguages.map(x => x.code))
         }
         lang ??= 'en-US'
         this.setLocale(lang)

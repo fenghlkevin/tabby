@@ -202,6 +202,10 @@ export class ElectronPlatformService extends PlatformService {
         return os.release()
     }
 
+    getPreferredLanguages (): readonly string[] {
+        return this.electron.app.getPreferredSystemLanguages()
+    }
+
     getAppVersion (): string {
         return this.electron.app.getVersion()
     }

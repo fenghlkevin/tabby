@@ -4,6 +4,32 @@ import { TerminalColorScheme } from 'tabby-core'
 
 @Injectable({ providedIn: 'root' })
 export class DefaultColorSchemes extends TerminalColorSchemeProvider {
+    /** Initial palette extracted from the customized Dracula configuration. */
+    static initialColorScheme: TerminalColorScheme = {
+        name: 'Dracula Green',
+        foreground: '#00CC74',
+        background: '#1e1f29',
+        cursor: '#bbbbbb',
+        colors: [
+            '#000000',
+            '#ff5555',
+            '#50fa7b',
+            '#f1fa8c',
+            '#bd93f9',
+            '#ff79c6',
+            '#8be9fd',
+            '#bbbbbb',
+            '#555555',
+            '#ff5555',
+            '#50fa7b',
+            '#f1fa8c',
+            '#bd93f9',
+            '#ff79c6',
+            '#8be9fd',
+            '#ffffff',
+        ],
+    }
+
     static defaultColorScheme: TerminalColorScheme = {
         name: 'Tabby Default',
         foreground: '#cacaca',
@@ -56,6 +82,7 @@ export class DefaultColorSchemes extends TerminalColorSchemeProvider {
 
     async getSchemes (): Promise<TerminalColorScheme[]> {
         return [
+            DefaultColorSchemes.initialColorScheme,
             DefaultColorSchemes.defaultColorScheme,
             DefaultColorSchemes.defaultLightColorScheme,
         ]

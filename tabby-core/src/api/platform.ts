@@ -260,6 +260,10 @@ export abstract class PlatformService {
         return 'dark'
     }
 
+    getPreferredLanguages (): readonly string[] {
+        return navigator.languages
+    }
+
     abstract getOSRelease (): string
     abstract getAppVersion (): string
     abstract openExternal (url: string): Promise<void>
