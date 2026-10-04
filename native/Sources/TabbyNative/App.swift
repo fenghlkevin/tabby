@@ -1,0 +1,815 @@
+import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+@main struct TabbyNativeApp: App {
+    @NSApplicationDelegateAdaptor(ApplicationDelegate.self) var delegate
+    @StateObject var store = AppStore()
+    var body: some Scene {
+        Window("Axon", id: "main") {
+            MainView().environmentObject(store).onAppear { delegate.store = store }.preferredColorScheme(.light).tint(Palette.accent).frame(minWidth: 1050, minHeight: 680).ignoresSafeArea(.container, edges: .top)
+                .background(MainWindowLifecycleProbe(controller: delegate.mainWindowController))
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1400, height: 860)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(store.text("Settings…", "设置…")) { store.openPreferences() }.keyboardShortcut(",")
+            }
+            CommandGroup(after: .newItem) {
+                Button(store.text("New tab", "新标签")) { store.openLauncher() }.keyboardShortcut("t")
+                Button(store.text("Search hosts or tabs", "搜索主机或标签")) { store.openLauncher() }.keyboardShortcut("k")
+                Button(store.text("New local terminal", "新建本地终端")) { store.connect() }.keyboardShortcut("t", modifiers: [.command, .shift])
+                Button(store.text("Split terminal", "终端分屏")) { store.split() }.keyboardShortcut("d")
+                Button(store.text("Close session", "关闭会话")) { if let id = store.activeSession { store.close(id) } }.keyboardShortcut("w", modifiers: [.command, .shift])
+                Button(store.text("Find in terminal", "搜索终端")) {
+                    if let session = store.sessions.first(where: { $0.id == store.activeSession }) {
+                        store.section = "terminal"
+                        let item = NSMenuItem(); item.tag = Int(NSFindPanelAction.showFindPanel.rawValue); session.terminal?.performFindPanelAction(item)
+                    }
+                }.keyboardShortcut("f")
+                Button(store.text("Import & Export", "导入与导出")) { store.openPreferences(.importHosts) }
+            }
+        }
+    }
+}
+
+@MainActor final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+    let mainWindowController = MainWindowLifecycleController()
+    weak var store: AppStore? {
+        didSet {
+            if launched {
+                store?.applyApplicationIconAtLaunch()
+                store?.automaticBackup.startAtLaunch()
+            }
+        }
+    }
+    private var launched = false
+    func applicationWillTerminate(_ notification: Notification) { store?.automaticBackup.cancel(); store?.monitoring.stop(); store?.forwardTasks.values.forEach { $0.cancel() }; store?.forwardEngines.values.forEach { $0.stop() }; store?.sessions.forEach { $0.disconnect() } }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        launched = true
+        store?.applyApplicationIconAtLaunch()
+        store?.automaticBackup.startAtLaunch()
+        NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // A Dock click restores the original view and its unsaved state.
+        !mainWindowController.reopen(using: sender)
+    }
+}
+
+/// Only the workspace window is retained. File panels, credential dialogs and
+/// other modal windows keep their own close and cancellation behavior.
+final class MainWindowLifecycleController: NSObject, NSWindowDelegate {
+    private(set) var window: NSWindow?
+    private var previousDelegate: NSWindowDelegate?
+
+    @MainActor func attach(to window: NSWindow) {
+        guard self.window == nil || self.window === window else { return }
+        self.window = window
+        window.isReleasedWhenClosed = false
+        if window.delegate !== self {
+            previousDelegate = window.delegate
+            window.delegate = self
+        }
+    }
+    @MainActor func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window else { return true }
+        sender.orderOut(nil)
+        return false
+    }
+    @MainActor @discardableResult func reopen(using application: NSApplication) -> Bool {
+        guard let window else { return false }
+        application.unhide(nil)
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        application.activate(ignoringOtherApps: true)
+        return true
+    }
+    // SwiftUI installs a window delegate of its own. Preserve its optional
+    // geometry and scene callbacks while intercepting only workspace close.
+    override func responds(to selector: Selector!) -> Bool {
+        super.responds(to: selector) || previousDelegate?.responds(to: selector) == true
+    }
+    override func forwardingTarget(for selector: Selector!) -> Any? {
+        if let previousDelegate, previousDelegate.responds(to: selector) { return previousDelegate }
+        return super.forwardingTarget(for: selector)
+    }
+}
+
+struct MainWindowLifecycleProbe: NSViewRepresentable {
+    let controller: MainWindowLifecycleController
+    func makeNSView(context: Context) -> MainWindowLifecycleView {
+        let view = MainWindowLifecycleView(); view.controller = controller; return view
+    }
+    func updateNSView(_ view: MainWindowLifecycleView, context: Context) {
+        view.controller = controller
+        view.attachWindow()
+        // SwiftUI may finish installing its delegate after attaching the view.
+        DispatchQueue.main.async { [weak view] in view?.attachWindow() }
+    }
+}
+
+final class MainWindowLifecycleView: NSView {
+    weak var controller: MainWindowLifecycleController?
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow(); attachWindow()
+    }
+    func attachWindow() {
+        guard let window else { return }
+        controller?.attach(to: window)
+    }
+}
+
+struct MainView: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var inspectorHost: Host?
+    @State private var inspectorGroup: HostGroup?
+    @State private var selectedHost: UUID?
+    @State private var terminalToolsVisible = false
+    @State private var terminalTool = "theme"
+    @State private var monitoringForeground = false
+    @State private var newTabHovering = false
+    @State private var lastVaultSection = "hosts"
+    @State private var gridView = true
+    @State private var selectedTag = ""
+    @State private var sort = "name"
+    @State private var favoritesOnly = false
+    @State private var newTabOpen = false
+    @State private var tagsManagementOpen = false
+    private let vaultSections = ["hosts", "monitoring", "credentials", "forwards", "snippets", "known", "logs", "settings"]
+    var vaultSelected: Bool { vaultSections.contains(store.section) }
+    var hostCatalog: HostLibraryCatalog { HostLibraryCatalog(hosts: store.workspace.hosts, group: store.group, query: store.search, tag: selectedTag, favoritesOnly: favoritesOnly, sort: sort, workspace: store.workspace) }
+    var filteredHosts: [Host] { hostCatalog.visibleHosts }
+    var allTags: [String] { store.tags }
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                workspaceBar
+                Rectangle().fill(store.section == "terminal" ? Color(hex: store.workspace.preferences.background) : Palette.border.opacity(0.6)).frame(height: 1)
+                workspaceContent(width: geometry.size.width, height: max(0, geometry.size.height - 53))
+            }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+        }.foregroundStyle(Palette.text).font(.system(size: 13)).background(Palette.background)
+        .background(WindowSurface())
+        .background(MonitoringVisibilityProbe { value in monitoringForeground = value })
+        .onAppear { returnToHostsIfNeeded(); updateMonitoring() }
+        .onDisappear { store.monitoring.stop() }
+        .onChange(of: monitoringForeground) { _, _ in updateMonitoring() }
+        .onChange(of: terminalToolsVisible) { _, _ in updateMonitoring() }
+        .onChange(of: terminalTool) { _, _ in updateMonitoring() }
+        .onChange(of: store.activeSession) { _, _ in updateMonitoring() }
+        .onChange(of: store.sessions.map(\.id)) { _, _ in returnToHostsIfNeeded() }
+        .onChange(of: store.workspace.hosts) { _, _ in updateMonitoring() }
+        .onChange(of: store.workspace.credentials) { _, _ in updateMonitoring() }
+        .onChange(of: store.workspace.groupDefaults) { _, _ in updateMonitoring() }
+        .onChange(of: store.group) { _, _ in inspectorHost = nil; inspectorGroup = nil; selectedHost = nil }
+        .onChange(of: store.section) { _, section in
+            if vaultSections.contains(section) { lastVaultSection = section }
+            if section == "launcher" { newTabOpen = true }
+            returnToHostsIfNeeded()
+            updateMonitoring()
+        }
+        .onChange(of: allTags) { _, tags in if !selectedTag.isEmpty { selectedTag = tags.first { CatalogNames.matches($0, selectedTag) } ?? "" } }
+        .sheet(isPresented: $tagsManagementOpen) { TagsManagementView().environmentObject(store) }
+        .alert(store.text("Error", "错误"), isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button(store.text("OK", "确定")) { store.error = nil } } message: { Text(store.error ?? "") }
+    }
+    private func workspaceContent(width: CGFloat, height: CGFloat) -> some View {
+        let navigationWidth: CGFloat = vaultSelected ? 185 : 0
+        let toolsWidth: CGFloat = store.section == "terminal" && terminalToolsVisible ? TerminalToolsPanel.width : 0
+        let inspectorWidth: CGFloat = store.section == "hosts" && (inspectorHost != nil || inspectorGroup != nil) ? 341 : 0
+        let centerWidth = max(0, width - navigationWidth - toolsWidth - inspectorWidth)
+        return HStack(spacing: 0) {
+            if vaultSelected {
+                sidebar.frame(width: 184, height: height)
+                Rectangle().fill(Palette.border.opacity(0.65)).frame(width: 1, height: height)
+            }
+            ZStack {
+                sessionArea.opacity(vaultSelected || store.section == "launcher" ? 0 : 1)
+                    .allowsHitTesting(!vaultSelected && store.section != "launcher")
+                if store.section == "hosts" { hosts }
+                if store.section == "monitoring" { MonitoringVaultView(center: store.monitoring) }
+                if store.section == "settings" { PreferencesView(selection: $store.settingsPage, showsSidebar: false) }
+                if store.section == "known" { KnownHostsView() }
+                if store.section == "credentials" { CredentialsView() }
+                if store.section == "forwards" { PortForwardsView() }
+                if store.section == "logs" { LogsView() }
+                if store.section == "snippets" { SnippetsView() }
+                if store.section == "launcher" { LauncherView() }
+            }.frame(width: centerWidth, height: height).background(Palette.background).clipped()
+            if store.section == "terminal" {
+                // Keep the drawer at its full width while the surrounding slot
+                // slides in and out. Only the workspace allocation animates;
+                // the window and the live terminal retain their identities.
+                TerminalToolsPanel(selection: $terminalTool, isVisible: $terminalToolsVisible, availableHeight: height)
+                    .frame(width: toolsWidth, height: height, alignment: .leading)
+                    .clipped()
+                    .allowsHitTesting(terminalToolsVisible)
+                    .accessibilityHidden(!terminalToolsVisible)
+            }
+            if store.section == "hosts", let host = inspectorHost {
+                Rectangle().fill(Palette.border).frame(width: 1, height: height)
+                HostEditor(host: host, isNew: !store.workspace.hosts.contains(where: { $0.id == host.id })) { inspectorHost = nil; selectedHost = nil }
+                    .id(host.id).frame(width: 340, height: height).background(Palette.sidebar)
+            } else if store.section == "hosts", let group = inspectorGroup {
+                Rectangle().fill(Palette.border).frame(width: 1, height: height)
+                GroupEditor(value: group, isNew: !store.groups.contains { CatalogNames.matches($0, group.name) }) { inspectorGroup = nil }
+                    .id(group.id).frame(width: 340, height: height).background(Palette.sidebar)
+            }
+        }.frame(width: width, height: height, alignment: .topLeading).clipped()
+            .animation(store.section == "terminal" && !reduceMotion ? .easeInOut(duration: 0.24) : nil, value: terminalToolsVisible)
+    }
+    var workspaceTabsWidth: CGFloat {
+        WorkspaceTabStripSizing.contentWidth(sessionWidths: store.sessions.map {
+            store.activeSession == $0.id && store.section == "terminal" ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive
+        }, showsNewTab: newTabOpen)
+    }
+    var workspaceScrollTarget: String? {
+        if store.section == "launcher" && newTabOpen { return "axon-launcher-tab" }
+        if store.section == "terminal", let id = store.activeSession { return "axon-session-tab:" + id.uuidString }
+        return nil
+    }
+    var workspaceBar: some View {
+        WorkspaceBarLayout(tabContentWidth: workspaceTabsWidth) {
+            HStack(spacing: 0) {
+                Button { store.section = lastVaultSection } label: {
+                    Label(store.text("Vaults", "主机库"), systemImage: "lock.shield")
+                }.buttonStyle(WorkspaceTabStyle(selected: vaultSelected, dark: store.section == "terminal")).focusEffectDisabled()
+                if vaultSelected {
+                    Menu {
+                        Button { store.section = lastVaultSection } label: { Label(store.text("Local vault", "本地保险库"), systemImage: "checkmark") }
+                    } label: { Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(Palette.chromeText).frame(width: 20, height: 34) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(store.text("Select vault", "选择保险库")).accessibilityLabel(store.text("Select vault", "选择保险库"))
+                }
+            }
+            Button { store.section = "sftp" } label: {
+                Label("SFTP", systemImage: "folder.fill").frame(width: store.section == "sftp" ? 108 : 68, alignment: .leading)
+            }.buttonStyle(WorkspaceTabStyle(selected: store.section == "sftp", dark: store.section == "terminal"))
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: WorkspaceTabDimensions.spacing) {
+                    ForEach(store.sessions) { session in
+                        SessionTab(session: session) { terminalToolsVisible.toggle() }
+                            .id("axon-session-tab:" + session.id.uuidString)
+                    }
+                    if newTabOpen {
+                        HStack(spacing: 8) {
+                            Button { newTabOpen = false; if store.section == "launcher" { store.section = "hosts" } } label: { Image(systemName: "xmark").frame(width: 16, height: 34) }
+                                .buttonStyle(.plain).opacity(newTabHovering || store.section == "launcher" ? 1 : 0).help(store.text("Close new tab", "关闭新标签"))
+                                .accessibilityLabel(store.text("Close new tab", "关闭新标签"))
+                            Button { store.openLauncher() } label: {
+                                Label(store.text("New Tab", "新标签"), systemImage: "plus.app.fill").frame(maxWidth: .infinity, minHeight: 34, alignment: .leading).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }.font(.system(size: 13)).padding(.horizontal, 12).frame(width: WorkspaceTabDimensions.newTab, height: 34)
+                            .foregroundStyle(store.section == "launcher" ? Palette.chromeText : Color(hex: "#969BB0"))
+                            .background(Color(hex: store.section == "launcher" ? "#45475F" : store.section == "terminal" ? "#252738" : "#393C52"))
+                            .clipShape(RoundedRectangle(cornerRadius: 10)).onHover { newTabHovering = $0 }.focusEffectDisabled()
+                            .id("axon-launcher-tab")
+                    }
+                    }.fixedSize(horizontal: true, vertical: false)
+                }
+                .onChange(of: workspaceScrollTarget) { _, target in
+                    guard let target else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard workspaceScrollTarget == target else { return }
+                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(target, anchor: .trailing) }
+                    }
+                }
+                .onChange(of: store.launcherRequest) { _, _ in
+                    Task { @MainActor in
+                        await Task.yield()
+                        if newTabOpen && store.section == "launcher" { withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo("axon-launcher-tab", anchor: .trailing) } }
+                    }
+                }
+            }
+            Button { newTabOpen = true; store.openLauncher() } label: { Image(systemName: "plus") }.buttonStyle(WorkspaceIconStyle()).help(store.text("New tab", "新标签")).accessibilityLabel(store.text("New tab", "新标签"))
+                .onDrop(of: [WorkspaceSessionDrag.type.rawValue], isTargeted: nil) { providers in
+                    guard let provider = providers.first else { return false }
+                    provider.loadDataRepresentation(forTypeIdentifier: WorkspaceSessionDrag.type.rawValue) { data, _ in
+                        guard let data, let text = String(data: data, encoding: .utf8), let id = UUID(uuidString: text) else { return }
+                        Task { @MainActor in store.moveSessionToEnd(id) }
+                    }
+                    return true
+                }
+            WindowDragHandle().frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52).help(store.text("Drag to move window", "拖动此处移动窗口"))
+            if store.section == "terminal" {
+                TerminalToolsToggleButton(isVisible: terminalToolsVisible, title: store.text("Terminal tools", "终端工具")) { terminalToolsVisible.toggle() }
+                    .frame(width: 28, height: 34)
+            }
+        }.padding(.leading, 84).padding(.trailing, 14).frame(height: 52)
+            .background(store.section == "terminal" ? Color(hex: store.workspace.preferences.background) : Palette.chrome)
+            .focusEffectDisabled().animation(.easeInOut(duration: 0.16), value: store.section)
+    }
+    func updateMonitoring() {
+        store.monitoring.configure(store: store, terminalStatusVisible: terminalToolsVisible && terminalTool == "status", foreground: monitoringForeground)
+    }
+    var sidebar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            WorkspaceNavigation(settingsPage: $store.settingsPage)
+            Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1)
+            HStack(spacing: 10) {
+                if let icon = ApplicationIconAppearance.image(for: store.workspace.preferences.applicationIcon) {
+                    Image(nsImage: icon).resizable().frame(width: 36, height: 36)
+                } else { IconTile(symbol: "terminal", color: Palette.blue, size: 34) }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Axon").font(.system(size: 13, weight: .medium))
+                    Text(store.text("Local workspace", "本地工作区")).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                }
+                Spacer(minLength: 0)
+            }.padding(.vertical, 12).padding(.horizontal, 4)
+        }.padding(.horizontal, 10).background(Palette.sidebar)
+    }
+    var hosts: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 14) {
+                HStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
+                    TextField(store.text("Find a host or ssh user@hostname…", "搜索主机或输入 ssh user@hostname…"), text: $store.search).textFieldStyle(.plain).font(.system(size: 14)).onSubmit(connectFromSearch)
+                    if !store.search.isEmpty { Button { store.search = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(Palette.muted) }
+                    Button(store.text("CONNECT", "连接"), action: connectFromSearch).buttonStyle(ChromeButtonStyle()).disabled(searchTarget == nil && quickHost == nil)
+                }.padding(.horizontal, 14).frame(height: 36).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.border, lineWidth: 1))
+                GeometryReader { geometry in
+                let compact = geometry.size.width < 800
+                HStack(spacing: 10) {
+                    HStack(spacing: 0) {
+                        Button { newHost() } label: { if compact { Image(systemName: "server.rack") } else { Label(store.text("NEW HOST", "新建主机"), systemImage: "server.rack") } }.buttonStyle(ChromeButtonStyle()).help(store.text("New host", "新建主机")).accessibilityLabel(store.text("New host", "新建主机"))
+                        Menu { Button(store.text("New group", "新建分组"), action: newGroup); Button(store.text("Import hosts", "导入主机")) { store.openPreferences(.importHosts) } } label: { Image(systemName: "chevron.down").font(.system(size: 10)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).frame(width: 24).padding(.trailing, 6)
+                    }.background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
+                    Button { store.connect() } label: { if compact { Image(systemName: "terminal") } else { Label(store.text("TERMINAL", "本地终端"), systemImage: "terminal") } }.buttonStyle(ChromeButtonStyle()).help(store.text("Local terminal", "本地终端")).accessibilityLabel(store.text("Local terminal", "本地终端"))
+                    Button(action: newGroup) { if compact { Image(systemName: "folder.badge.plus") } else { Label(store.text("New group", "新建分组"), systemImage: "folder.badge.plus") } }.buttonStyle(ChromeButtonStyle()).help(store.text("New group", "新建分组")).accessibilityLabel(store.text("New group", "新建分组")).accessibilityIdentifier("axon-new-group")
+                    Spacer(minLength: 6)
+                    HostLibraryLayoutPicker(grid: $gridView, chinese: store.chinese).frame(width: 70, height: 32)
+                    Menu { Button(store.text("All tags", "全部标签")) { selectedTag = "" }; ForEach(allTags, id: \.self) { tag in Button(tag) { selectedTag = tag } }; Divider(); Button(store.text("Manage tags…", "管理标签…")) { tagsManagementOpen = true } } label: { Image(systemName: "tag.fill").foregroundStyle(selectedTag.isEmpty ? Palette.text : Palette.accent); Image(systemName: "chevron.down").font(.system(size: 9)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize()
+                    Menu { Button(store.text("Name", "名称")) { sort = "name" }; Button(store.text("Address", "地址")) { sort = "address" }; Button(store.text("Favorites first", "收藏优先")) { sort = "favorite" } } label: { Image(systemName: "arrow.up.arrow.down"); Image(systemName: "chevron.down").font(.system(size: 9)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize()
+                    Button { favoritesOnly.toggle() } label: { Image(systemName: favoritesOnly ? "star.fill" : "star").foregroundStyle(favoritesOnly ? Palette.accent : Palette.text) }.buttonStyle(IconButtonStyle()).help(store.text("Favorites", "收藏主机"))
+                    Button { tagsManagementOpen = true } label: { if compact { Image(systemName: "tag") } else { Label(store.text("Manage tags", "管理标签"), systemImage: "tag") } }.buttonStyle(ChromeButtonStyle()).help(store.text("Manage tags", "管理标签")).accessibilityLabel(store.text("Manage tags", "管理标签"))
+                }
+                }.frame(height: 34)
+            }.padding(12).background(Palette.sidebar)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !store.group.isEmpty || !selectedTag.isEmpty {
+                        HStack(spacing: 8) {
+                            Button(store.text("All hosts", "全部主机")) { store.group = ""; selectedTag = "" }.buttonStyle(.plain).foregroundStyle(Palette.muted)
+                            Image(systemName: "chevron.right").font(.system(size: 10))
+                            Text(store.group.isEmpty ? selectedTag : store.group)
+                            Spacer()
+                            if !store.group.isEmpty { Button { editGroup(store.group) } label: { Label(store.text("Edit group", "编辑分组"), systemImage: "pencil") }.buttonStyle(ChromeButtonStyle()).accessibilityIdentifier("axon-edit-current-group") }
+                        }.font(.system(size: 12)).padding(.bottom, 4)
+                    }
+                    if hostCatalog.isRootBrowse && !store.groups.isEmpty {
+                        PaneHeading(title: store.text("Groups", "分组"))
+                        LazyVGrid(columns: gridView ? columns : [GridItem(.flexible())], spacing: 12) {
+                            ForEach(store.groups, id: \.self) { group in
+                                HStack(spacing: 10) {
+                                    Button { store.group = group } label: {
+                                        HStack(spacing: 12) { IconTile(symbol: "folder.fill", color: Palette.blue); VStack(alignment: .leading, spacing: 6) { Text(group).font(.system(size: 14)).foregroundStyle(Palette.text); Text(String(store.catalogHostCount(group, section: .groups)) + store.text(" hosts", " 台主机")).font(.system(size: 11)).foregroundStyle(Palette.muted) }; Spacer(minLength: 0) }.frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76).contentShape(Rectangle())
+                                    }.buttonStyle(.plain)
+                                    HostCardActionButton(symbol: "pencil", color: NSColor(Palette.muted), label: store.text("Edit group", "编辑分组"), identifier: "axon-group-edit-" + group) { editGroup(group) }.frame(width: 32, height: 32)
+                                }.padding(.horizontal, 14).frame(height: 76).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 14)).contextMenu {
+                                    Button(store.text("Edit group", "编辑分组")) { editGroup(group) }
+                                    Button(store.text("Delete group", "删除分组（保留主机）")) { deleteGroup(group) }
+                                }
+                            }
+                        }.padding(.bottom, 10)
+                    }
+                    if !hostCatalog.isRootBrowse || !filteredHosts.isEmpty || store.groups.isEmpty {
+                    HStack { PaneHeading(title: hostCatalog.isRootBrowse && !store.groups.isEmpty ? store.text("Ungrouped hosts", "未分组主机") : store.text("Hosts", "主机")); Text(String(filteredHosts.count)).font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer() }
+                    LazyVGrid(columns: gridView ? columns : [GridItem(.flexible())], spacing: 12) {
+                        ForEach(filteredHosts) { host in
+                            HostCard(host: host, selected: selectedHost == host.id, compact: gridView,
+                                     select: { selectHost(host) }, connect: { store.connect(host) }, edit: { selectHost(host) },
+                                     favorite: { toggleFavorite(host) }, delete: { deleteHost(host) }, showGroup: store.group.isEmpty && !hostCatalog.isRootBrowse, monitor: { store.showMonitoring(host) })
+                        }
+                    }
+                    if filteredHosts.isEmpty {
+                        VStack(spacing: 15) {
+                            IconTile(symbol: "server.rack", color: Palette.field, size: 58)
+                            Text(store.workspace.hosts.isEmpty ? store.text("Your servers, in one place", "在这里管理你的服务器") : store.text("No matching hosts", "没有符合条件的主机")).font(.system(size: 17, weight: .medium))
+                            Text(store.workspace.hosts.isEmpty ? store.text("Add your first host or import existing connections.", "添加第一台主机，或导入已有连接。") : store.text("Try another search or clear the filters.", "调整搜索词或清除筛选条件。 ")).font(.system(size: 13)).foregroundStyle(Palette.muted)
+                            HStack(spacing: 10) { Button(store.text("New host", "新建主机"), action: newHost).buttonStyle(ChromeButtonStyle(prominent: true)); if store.workspace.hosts.isEmpty { Button(store.text("Import", "导入")) { store.openPreferences(.importHosts) }.buttonStyle(ChromeButtonStyle()) } else { Button(store.text("Clear filters", "清除筛选")) { store.search = ""; selectedTag = ""; favoritesOnly = false }.buttonStyle(ChromeButtonStyle()) } }
+                        }.frame(maxWidth: .infinity).padding(.vertical, 65)
+                    }
+                    }
+                }.padding(22)
+            }
+        }
+    }
+    var columns: [GridItem] { [GridItem(.adaptive(minimum: 290, maximum: 560), spacing: 12)] }
+    var searchTarget: Host? {
+        if let selectedHost, let host = filteredHosts.first(where: { $0.id == selectedHost }) { return host }
+        return filteredHosts.count == 1 ? filteredHosts.first : nil
+    }
+    var quickHost: Host? { parseQuickHost(store.search) }
+    func connectFromSearch() { if let host = searchTarget ?? quickHost { store.connect(host) } }
+    func newHost() {
+        var host = Host(); host.group = store.group
+        if store.groupDefaults(named: host.group) != nil { host.groupInheritance = .all }
+        inspectorGroup = nil; inspectorHost = host; selectedHost = nil
+    }
+    func selectHost(_ host: Host) { inspectorGroup = nil; selectedHost = host.id; inspectorHost = host }
+    func toggleFavorite(_ host: Host) { if let i = store.workspace.hosts.firstIndex(where: { $0.id == host.id }) { store.workspace.hosts[i].favorite.toggle(); store.save() } }
+    func newGroup() {
+        inspectorHost = nil; selectedHost = nil; inspectorGroup = HostGroup()
+    }
+    func editGroup(_ name: String) {
+        inspectorHost = nil; selectedHost = nil
+        inspectorGroup = store.groupDefaults(named: name) ?? HostGroup(name: name)
+    }
+    func returnToHostsIfNeeded() {
+        if store.section == "terminal", !store.sessions.contains(where: { $0.id == store.activeSession }) {
+            if let session = store.sessions.first { store.activeSession = session.id }
+            else { store.section = "hosts" }
+        }
+        if store.section == "launcher", !newTabOpen { store.section = "hosts" }
+    }
+    func deleteGroup(_ group: String) {
+        let alert = NSAlert(); alert.messageText = store.text("Delete group \(group)?", "删除分组“\(group)”？")
+        alert.informativeText = store.text("Hosts will be kept and moved to Ungrouped.", "保留分组内的主机，并将其移至未分组。")
+        alert.addButton(withTitle: store.text("Delete group", "删除分组")); alert.addButton(withTitle: store.text("Cancel", "取消"))
+        if alert.runModal() == .alertFirstButtonReturn { store.dissolveGroup(group) }
+    }
+    var sessionArea: some View {
+        GeometryReader { geometry in
+            let peer = store.activeSession.flatMap { store.splitPartners[$0] }
+            let pair = store.sessions.filter { $0.id == store.activeSession || $0.id == peer }.map(\.id)
+            ZStack(alignment: .leading) {
+                ForEach(store.sessions) { session in
+                    let visible = pair.contains(session.id) && !vaultSelected && store.section != "launcher"
+                    SessionWorkspace(session: session, showFiles: store.section == "sftp" && store.activeSession == session.id, active: visible && store.section == "terminal", focused: store.activeSession == session.id)
+                        .frame(width: peer != nil && store.section == "terminal" ? (geometry.size.width - 6) / 2 : geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                        .offset(x: peer != nil && store.section == "terminal" && session.id != pair.first ? (geometry.size.width + 6) / 2 : 0)
+                        .opacity((store.section == "sftp" ? store.activeSession == session.id : pair.contains(session.id)) ? 1 : 0)
+                        .allowsHitTesting(store.section == "sftp" ? store.activeSession == session.id : pair.contains(session.id))
+                }
+                if peer != nil && store.section == "terminal" { Rectangle().fill(Palette.chrome).frame(width: 6).offset(x: (geometry.size.width - 6) / 2) }
+                if store.sessions.isEmpty && store.section == "sftp" { DisconnectedFilesWorkspace(store: store) }
+            }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading).clipped()
+        }
+    }
+    func deleteHost(_ host: Host) {
+        let alert = NSAlert(); alert.messageText = store.text("Delete this host?", "删除此主机？"); alert.informativeText = host.name
+        alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
+        if alert.runModal() == .alertFirstButtonReturn { do { try store.deleteHost(host.id); if selectedHost == host.id { selectedHost = nil; inspectorHost = nil } } catch { store.error = error.localizedDescription } }
+    }
+}
+
+struct SessionWorkspace: View {
+    @ObservedObject var session: TerminalSession
+    @StateObject var files: FileManagerModel
+    var showFiles: Bool
+    var active: Bool
+    var focused: Bool
+    init(session: TerminalSession, showFiles: Bool, active: Bool, focused: Bool) { self.session = session; self.showFiles = showFiles; self.active = active; self.focused = focused; _files = StateObject(wrappedValue: FileManagerModel(session: session)) }
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                TerminalSurface(session: session, active: active, focused: focused).padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8).opacity(showFiles ? 0 : 1).allowsHitTesting(!showFiles)
+                if !showFiles && !session.connected && !session.status.isEmpty {
+                    HStack(spacing: 10) {
+                        Text(session.status).font(.system(size: 12)).lineLimit(2)
+                        if session.host != nil { Button { session.reconnect() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(WorkspaceIconStyle()).help(session.store.text("Reconnect", "重新连接")) }
+                    }.padding(.horizontal, 12).padding(.vertical, 6).foregroundStyle(Palette.chromeText).background(Palette.chrome).clipShape(RoundedRectangle(cornerRadius: 8)).padding(16)
+                }
+                if showFiles { FilesView(model: files).environmentObject(session.store) }
+            }
+        }.background(Color(hex: session.store.workspace.preferences.background)).onChange(of: session.connected) { _, connected in if connected && showFiles { Task { await files.open() } } }
+        .task(id: session.store.recentFileRequest?.id) {
+            if showFiles { await files.openRecentRequestIfNeeded() }
+        }
+        .onDisappear { if !session.store.sessions.contains(where: { $0.id == session.id }) { files.close() } }
+    }
+}
+
+struct HostEditor: View {
+    @EnvironmentObject var store: AppStore
+    @State var host: Host
+    var isNew: Bool
+    var done: () -> Void
+    @State private var secret = ""
+    @State private var privateKeyText = ""
+    @State private var tagDraft = ""
+    @State private var savedTags = ""
+    @State private var savedGroup = ""
+    @State private var savedGroupDefaults: HostGroup?
+    @State private var secretLoaded = false
+    @State private var portValid = true
+    @State private var credentialLoadError = ""
+    @State private var credentialLoadAttempt = 0
+    @State private var independentCredential: IndependentHostCredentialDraft?
+    @State private var editingCredential: VaultCredential?
+    @State private var error = ""
+    private var selectedCredential: VaultCredential? { store.workspace.credentials.first { $0.id == host.credentialID } }
+    private var groupDefaults: HostGroup? { store.groupDefaults(named: host.group) }
+    private var effectiveHost: Host { store.resolvedHost(host) }
+    private var inheritsAuthentication: Bool { groupDefaults != nil && host.groupInheritance?.authentication == true }
+    private var credentialLoadID: String { "\(host.id)-\(host.credentialID?.uuidString ?? "independent")-\(inheritsAuthentication)-\(credentialLoadAttempt)" }
+    private var formValidationError: String? {
+        do { _ = try ConnectionValidation.host(effectiveHost, workspace: store.workspace, chinese: store.chinese); return nil }
+        catch { return error.localizedDescription }
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack { Text(isNew ? store.text("New host", "新建主机") : store.text("Host details", "主机详情")).font(.system(size: 15, weight: .medium)); Spacer(); Button(action: done) { Image(systemName: "xmark") }.buttonStyle(IconButtonStyle()).help(store.text("Close details", "关闭详情")) }.padding(.horizontal, 18).frame(height: 52)
+            Rectangle().fill(Palette.border).frame(height: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack(spacing: 12) { IconTile(symbol: "server.rack", size: 48); VStack(alignment: .leading, spacing: 6) { Text(host.name.isEmpty ? store.text("Unnamed host", "未命名主机") : host.name).font(.system(size: 14, weight: .medium)).lineLimit(1); Text(store.text("Local vault", "本地保险库")).font(.system(size: 11)).foregroundStyle(Palette.muted) } }
+                    if !isNew { Button { store.showMonitoring(host) } label: { Label(store.text("View status", "查看状态"), systemImage: "waveform.path.ecg") }.buttonStyle(ChromeButtonStyle()) }
+                    sectionTitle(store.text("ADDRESS", "地址"))
+                    TextField(store.text("Hostname or IP address", "主机名或 IP 地址"), text: $host.address).appInput()
+                    sectionTitle(store.text("GENERAL", "常规"))
+                    field(store.text("Label", "名称")) { TextField(store.text("Host label", "主机名称"), text: $host.name).appInput() }
+                    field(store.text("Group", "分组")) {
+                        GroupPicker(selection: Binding(get: { host.group }, set: chooseGroup), groups: store.groups, chinese: store.chinese).frame(height: 38).disabled(!secretLoaded)
+                        if let groupDefaults {
+                            Text(store.text("Connection settings can follow \(groupDefaults.name). Turn off “Use group” to set an individual value.", "可复用“\(groupDefaults.name)”的连接设置，关闭“使用分组”即可单独设置。"))
+                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        }
+                    }
+                    field(store.text("Tags", "标签")) { TagsEditor(tags: $host.tags, pending: $tagDraft, suggestions: store.tags, chinese: store.chinese) }
+                    Divider().overlay(Palette.border)
+                    HStack { sectionTitle("SSH"); Spacer(); Text(store.text("Enabled", "已启用")).font(.system(size: 11)).foregroundStyle(Palette.accent) }
+                    inheritedField(store.text("Port", "端口"), keyPath: \.port) {
+                        if groupDefaults != nil && host.groupInheritance?.port == true {
+                            Text(String(effectiveHost.port)).frame(maxWidth: .infinity, alignment: .leading).appInput().foregroundStyle(Palette.muted)
+                        } else { PortInput(value: $host.port, valid: $portValid, placeholder: "22", label: store.text("SSH port", "SSH 端口")) }
+                    }
+                    inheritedField(store.text("Username", "用户名"), keyPath: \.username) {
+                        if groupDefaults != nil && host.groupInheritance?.username == true || (!inheritsAuthentication && host.credentialID != nil) {
+                            Text(effectiveHost.username).frame(maxWidth: .infinity, alignment: .leading).appInput().foregroundStyle(Palette.muted)
+                        } else { TextField(store.text("Username", "用户名"), text: $host.username).appInput().disabled(!inheritsAuthentication && host.credentialID != nil) }
+                        if !inheritsAuthentication && host.credentialID != nil {
+                            Text(store.text("This shared credential owns the username. Use group authentication or an individual login to override it.", "用户名由所选共享凭据提供。可改为分组认证或单独登录后设置。"))
+                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        }
+                    }
+                    inheritedField(store.text("Login credentials", "登录凭据"), keyPath: \.authentication) {
+                    if inheritsAuthentication {
+                        HStack(spacing: 10) { Image(systemName: effectiveHost.auth == "key" ? "key.fill" : "lock.fill"); Text(effectiveHost.auth == "key" ? store.text("Group private key", "使用分组私钥") : store.text("Group password", "使用分组密码")); Spacer() }
+                            .font(.system(size: 12)).foregroundStyle(Palette.muted).appInput()
+                        Text(store.text("The group's current authentication is used on connection. No need to enter it again.", "连接时使用分组当前的认证设置，无需再次填写。"))
+                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    } else {
+                        CredentialPicker(selectedID: Binding(get: { host.credentialID }, set: { chooseCredential($0) }),
+                                         credentials: store.workspace.credentials, chinese: store.chinese,
+                                         enabled: secretLoaded, onNew: {}, allowsCreation: false)
+                            .frame(maxWidth: .infinity).frame(height: CredentialPickerButton.fieldHeight)
+                        if let credential = selectedCredential {
+                            Text(store.text("This host uses the shared username and authentication below. Edit the shared credential to change them, or choose “Set up for this host”.", "此主机使用共享的用户名和认证方式。可编辑共享凭据，或选择“仅用于此主机”单独设置。"))
+                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                            Button(store.text("Edit shared credential", "编辑共享凭据")) { editingCredential = credential }.buttonStyle(ChromeButtonStyle())
+                        } else {
+                            Text(store.text("The username and password or key below are used only by this host. Manage shared credentials in the credential vault.", "下方用户名和密码或私钥仅用于此主机，共享凭据可在凭据库中管理。"))
+                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        }
+                    }
+                    }
+                    if !inheritsAuthentication {
+                    field(store.text("Authentication", "认证")) {
+                        AuthenticationSelector(selection: Binding(get: { host.auth }, set: { value in
+                            host.auth = value
+                            if value == "key", host.keySource == nil, host.keyPath.isEmpty { host.keySource = "text" }
+                        }), passwordTitle: store.text("Password", "密码"), keyTitle: store.text("Private key", "私钥"), enabled: secretLoaded && host.credentialID == nil)
+                        if !credentialLoadError.isEmpty {
+                            Text(credentialLoadError).font(.system(size: 11)).foregroundStyle(.red)
+                            if !secretLoaded { Button(store.text("Retry reading credentials", "重新读取凭据")) { credentialLoadAttempt += 1 }.buttonStyle(ChromeButtonStyle()) }
+                        } else if !secretLoaded {
+                            HStack(spacing: 8) { ProgressView().controlSize(.small); Text(store.text("Reading saved credentials…", "正在读取已保存的凭据…")) }.font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        }
+                    }
+                    if host.auth == "key" {
+                        field(store.text("Private key", "私钥")) {
+                            if host.credentialID == nil { PrivateKeyInput(source: $host.keySource, path: $host.keyPath, text: $privateKeyText).disabled(!secretLoaded) }
+                            else { Text(host.keySource == "text" ? store.text("Text key from shared identity", "使用共享身份中的文本私钥") : host.keyPath).font(.system(size: 12)).foregroundStyle(Palette.muted) }
+                        }
+                    }
+                    field(host.auth == "key" ? store.text("Passphrase", "私钥口令") : store.text("Password", "密码")) { PreferencesSecureField(title: store.text("Optional", "可稍后输入"), text: $secret, identifier: "axon-host-secret", chinese: store.chinese).appInput().disabled(!secretLoaded || host.credentialID != nil) }
+                    Text(host.credentialID == nil ? store.text("Credentials are saved in macOS Keychain.", "凭据保存在 macOS 钥匙串中。 ") : store.text("Shared secrets are saved in macOS Keychain. Future connections use the shared credential's current values.", "共享凭据保存在 macOS 钥匙串中，后续连接使用它的最新设置。 ")).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    }
+                    Divider().overlay(Palette.border)
+                    sectionTitle(store.text("ADVANCED", "高级"))
+                    inheritedField(store.text("Jump host", "跳板机"), keyPath: \.jumpHost) {
+                        if groupDefaults != nil && host.groupInheritance?.jumpHost == true {
+                            Text(effectiveHost.jumpHostID.flatMap { id in store.workspace.hosts.first { $0.id == id } }.map { $0.name.isEmpty ? $0.address : $0.name } ?? store.text("None · direct connection", "无 · 直接连接")).frame(maxWidth: .infinity, alignment: .leading).appInput().foregroundStyle(Palette.muted)
+                        } else {
+                            JumpHostPicker(selection: $host.jumpHostID, host: effectiveHost, hosts: store.workspace.hosts.map(store.resolvedHost), chinese: store.chinese).frame(height: 38)
+                        }
+                    }
+                }.padding(18)
+            }
+            if !error.isEmpty || (formValidationError != nil && (!isNew || !host.address.isEmpty)) {
+                Text(error.isEmpty ? (formValidationError ?? "") : error).font(.system(size: 11)).foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 8)
+            }
+            Rectangle().fill(Palette.border).frame(height: 1)
+            HStack(spacing: 10) {
+                Button(store.text("Save", "保存")) { save(connect: false) }.buttonStyle(ChromeButtonStyle()).keyboardShortcut(.return, modifiers: .command)
+                Button { save(connect: true) } label: { Label(store.text("Connect", "连接"), systemImage: "terminal") }.buttonStyle(ChromeButtonStyle(prominent: true))
+            }.frame(maxWidth: .infinity).padding(16).disabled(!secretLoaded || (!portValid && host.groupInheritance?.port != true) || formValidationError != nil)
+        }.onAppear { savedTags = host.tags; savedGroup = host.group; savedGroupDefaults = groupDefaults }
+        .onChange(of: store.workspace.groupDefaults) { _, _ in
+            if let current = groupDefaults { savedGroupDefaults = current }
+        }
+        .onChange(of: store.workspace.hosts) { _, hosts in
+            guard let saved = hosts.first(where: { $0.id == host.id }) else { return }
+            if saved.tags != savedTags {
+                let oldTags = TagTokens.parse(savedTags)
+                let newTags = TagTokens.parse(saved.tags)
+                let removed = oldTags.filter { !CatalogNames.contains(newTags, $0) }
+                let added = newTags.filter { !CatalogNames.contains(oldTags, $0) }
+                host.tags = TagTokens.serialized(TagTokens.parse(host.tags).filter { !CatalogNames.contains(removed, $0) }.map { tag in newTags.first { CatalogNames.matches($0, tag) } ?? tag } + added)
+                savedTags = saved.tags
+            }
+            if saved.group != savedGroup {
+                if CatalogNames.matches(host.group, savedGroup) {
+                    if saved.group.isEmpty, let defaults = savedGroupDefaults, host.groupInheritance?.hasAny == true {
+                        let inheritedAuthentication = host.groupInheritance?.authentication == true
+                        var previous = store.workspace; previous.groupDefaults = [defaults]
+                        host = GroupDefaults.resolved(host, workspace: previous)
+                        if inheritedAuthentication {
+                            // Store deletion copied inherited secrets to the host.
+                            // Refresh that copy before a subsequent editor save.
+                            independentCredential = nil; credentialLoadAttempt += 1
+                        }
+                    }
+                    host.group = saved.group
+                }
+                savedGroup = saved.group
+                savedGroupDefaults = groupDefaults
+            }
+        }
+        .sheet(item: $editingCredential) { value in
+            CredentialEditor(value: value, onSaved: { saved in
+                chooseCredential(saved.id)
+                applySharedCredential(saved)
+            }).environmentObject(store)
+        }.task(id: credentialLoadID) {
+            secretLoaded = false
+            credentialLoadError = ""
+            let selectedID = host.credentialID
+            let id = host.id
+            if inheritsAuthentication { secretLoaded = true; return }
+            if let selectedID {
+                guard let credential = store.workspace.credentials.first(where: { $0.id == selectedID }) else {
+                    credentialLoadError = store.text("The shared credential is unavailable. Choose a different credential.", "共享凭据已不存在，请选择其他凭据。")
+                    secretLoaded = true
+                    return
+                }
+                applySharedCredential(credential)
+                secret = ""; privateKeyText = ""; secretLoaded = true
+                return
+            }
+            if let draft = independentCredential {
+                draft.apply(to: &host)
+                secret = draft.secret; privateKeyText = draft.privateKey; secretLoaded = true
+                return
+            }
+            if isNew { secretLoaded = true; return }
+            do {
+                let saved = try await Task.detached { try Secrets.readCredential(id) }.value
+                guard !Task.isCancelled, host.credentialID == selectedID else { return }
+                secret = saved.secret; privateKeyText = saved.privateKey; secretLoaded = true
+            } catch {
+                guard !Task.isCancelled, host.credentialID == selectedID else { return }
+                credentialLoadError = error.localizedDescription
+            }
+        }
+    }
+    func sectionTitle(_ title: String) -> some View { Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.muted) }
+    func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.system(size: 12)).foregroundStyle(Palette.muted); content() } }
+    func inheritedField<Content: View>(_ title: String, keyPath: WritableKeyPath<HostGroupInheritance, Bool>, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.system(size: 12)).foregroundStyle(Palette.muted)
+                Spacer()
+                if groupDefaults != nil {
+                    GroupSettingToggle(isOn: Binding(get: { host.groupInheritance?[keyPath: keyPath] ?? false }, set: { value in setInheritance(value, keyPath: keyPath) }), title: store.text("Use group", "使用分组"), label: title + store.text(": Use group", "：使用分组"), identifier: "axon-group-inherit-" + inheritanceName(keyPath)).frame(width: 96, height: 22)
+                        .disabled(!secretLoaded || (keyPath == \.username && !inheritsAuthentication && host.credentialID != nil))
+                }
+            }
+            content()
+        }
+    }
+    private func inheritanceName(_ keyPath: WritableKeyPath<HostGroupInheritance, Bool>) -> String {
+        if keyPath == \.port { return "port" }
+        if keyPath == \.username { return "username" }
+        if keyPath == \.authentication { return "authentication" }
+        return "jump"
+    }
+    private func setInheritance(_ enabled: Bool, keyPath: WritableKeyPath<HostGroupInheritance, Bool>) {
+        if keyPath == \.authentication {
+            if enabled, !inheritsAuthentication, secretLoaded, host.credentialID == nil {
+                independentCredential = IndependentHostCredentialDraft(host: host, secret: secret, privateKey: privateKeyText)
+            } else if !enabled, inheritsAuthentication, independentCredential == nil, host.credentialID == nil {
+                detachGroupAuthentication { applyInheritance(false, keyPath: keyPath) }
+                return
+            }
+        }
+        applyInheritance(enabled, keyPath: keyPath)
+    }
+    private func applyInheritance(_ enabled: Bool, keyPath: WritableKeyPath<HostGroupInheritance, Bool>) {
+        var flags = host.groupInheritance ?? HostGroupInheritance(port: false, username: false, authentication: false, jumpHost: false)
+        flags[keyPath: keyPath] = enabled
+        if keyPath == \.authentication, !enabled, host.credentialID != nil { flags.username = false }
+        host.groupInheritance = flags
+    }
+    private func detachGroupAuthentication(after: @escaping () -> Void) {
+        let original = host
+        let resolved = effectiveHost
+        let secretID = store.groupSecretID(for: original)
+        secretLoaded = false; credentialLoadError = ""
+        Task { @MainActor in
+            do {
+                let material = try await Task.detached { try Secrets.readCredential(secretID) }.value
+                guard host.id == original.id, CatalogNames.matches(host.group, original.group), host.groupInheritance?.authentication == true else { return }
+                independentCredential = IndependentHostCredentialDraft(host: resolved, secret: material.secret, privateKey: material.privateKey)
+                secret = material.secret; privateKeyText = material.privateKey
+                secretLoaded = true; after()
+            } catch {
+                credentialLoadError = error.localizedDescription
+                self.error = error.localizedDescription; secretLoaded = true
+            }
+        }
+    }
+    private func chooseGroup(_ name: String) {
+        guard !CatalogNames.matches(host.group, name) else { return }
+        if groupDefaults != nil, host.groupInheritance?.hasAny == true, store.groupDefaults(named: name) == nil {
+            let resolved = effectiveHost
+            if inheritsAuthentication {
+                detachGroupAuthentication {
+                    host = resolved; host.group = name; host.groupInheritance = nil
+                    savedGroupDefaults = nil
+                }
+            } else {
+                host = resolved; host.group = name; host.groupInheritance = nil; savedGroupDefaults = nil
+            }
+        } else {
+            if store.groupDefaults(named: name) != nil, !inheritsAuthentication, host.credentialID == nil, secretLoaded {
+                independentCredential = IndependentHostCredentialDraft(host: host, secret: secret, privateKey: privateKeyText)
+            }
+            host.group = name; host.groupInheritance = store.groupDefaults(named: name) == nil ? nil : .all
+            savedGroupDefaults = groupDefaults
+        }
+    }
+    private func applySharedCredential(_ value: VaultCredential) {
+        host.username = value.username; host.auth = value.auth; host.keyPath = value.keyPath; host.keySource = value.keySource
+    }
+    private func chooseCredential(_ id: UUID?) {
+        guard host.credentialID != id else { return }
+        if host.credentialID == nil, secretLoaded {
+            independentCredential = IndependentHostCredentialDraft(host: host, secret: secret, privateKey: privateKeyText)
+        } else if id == nil, independentCredential == nil {
+            // A host that started with a shared identity has no editable secret
+            // loaded. Detaching starts an explicit empty credential draft.
+            independentCredential = IndependentHostCredentialDraft(host: host, secret: "", privateKey: "")
+        }
+        host.credentialID = id
+        if id != nil, host.groupInheritance != nil { host.groupInheritance?.username = false }
+        secretLoaded = false; error = ""
+    }
+    func save(connect: Bool) {
+        guard secretLoaded, portValid || (groupDefaults != nil && host.groupInheritance?.port == true) else { error = store.text("Enter a port from 1 to 65535 and wait for credentials to load.", "请输入 1–65535 的端口，并等待凭据读取完成。"); return }
+        host.tags = TagTokens.committing(host.tags, draft: tagDraft); tagDraft = ""
+        if let original = store.workspace.hosts.first(where: { $0.id == host.id }) { host.favorite = original.favorite }
+        do { try store.upsert(host, secret: secret, privateKey: privateKeyText); if connect, let saved = store.workspace.hosts.first(where: { $0.id == host.id }) { store.connect(saved) }; done() } catch { self.error = error.localizedDescription }
+    }
+}
+
+struct SessionTab: View {
+    @EnvironmentObject var store: AppStore
+    @ObservedObject var session: TerminalSession
+    var showTools: () -> Void
+    var selected: Bool { store.activeSession == session.id && store.section == "terminal" }
+    var index: Int? { store.sessions.firstIndex(where: { $0.id == session.id }) }
+    var body: some View {
+        NativeSessionTab(id: session.id, title: session.displayTitle, selected: selected, connected: session.connected,
+                         dark: store.section == "terminal", chinese: store.chinese, remote: session.host != nil,
+                         canMoveLeft: (index ?? 0) > 0, canMoveRight: (index ?? store.sessions.count) < store.sessions.count - 1,
+                         onAction: performAction, canDropSession: { id in store.sessions.contains { $0.id == id } },
+                         onDropSession: { id, placement in
+            switch placement {
+            case .before: store.moveSession(id, before: session.id)
+            case .after: store.moveSession(id, after: session.id)
+            }
+        }).frame(width: selected ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive, height: 34)
+            .focusEffectDisabled()
+    }
+    func performAction(_ action: SessionTabAction) {
+        switch action {
+        case .select: store.activeSession = session.id; store.section = "terminal"
+        case .close: store.close(session.id)
+        case .tools: showTools()
+        case .duplicate: store.connect(session.host)
+        case .split: store.activeSession = session.id; store.split()
+        case .reconnect: session.reconnect()
+        case .moveLeft: store.moveSession(session.id, by: -1)
+        case .moveRight: store.moveSession(session.id, by: 1)
+        case .moveFirst: store.moveSessionToBeginning(session.id)
+        case .moveLast: store.moveSessionToEnd(session.id)
+        case .closeOthers: for id in store.sessions.map(\.id) where id != session.id { store.close(id) }
+        }
+    }
+}

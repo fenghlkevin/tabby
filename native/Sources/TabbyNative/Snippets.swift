@@ -1,0 +1,384 @@
+import Foundation
+import AppKit
+import SwiftUI
+import SwiftTerm
+
+struct CommandSnippet: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name = ""
+    var group = ""
+    var body = ""
+    var notes = ""
+
+    enum CodingKeys: String, CodingKey { case id, name, group, body, notes }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        group = try values.decodeIfPresent(String.self, forKey: .group) ?? ""
+        body = try values.decodeIfPresent(String.self, forKey: .body) ?? ""
+        notes = try values.decodeIfPresent(String.self, forKey: .notes) ?? ""
+    }
+}
+
+enum SnippetAction { case insert, run }
+
+enum SnippetInput {
+    static func normalized(_ body: String) -> String {
+        body.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .newlines)
+    }
+    static func validate(_ body: String, chinese: Bool) throws {
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AppFailure.message(chinese ? "请输入命令内容" : "Enter a command")
+        }
+        guard body.utf8.count <= 256 * 1024 else {
+            throw AppFailure.message(chinese ? "代码片段不能超过 256 KB" : "A snippet must be smaller than 256 KB")
+        }
+        guard !body.unicodeScalars.contains(where: { ($0.value < 32 && $0.value != 9 && $0.value != 10 && $0.value != 13) || $0.value == 127 }) else {
+            throw AppFailure.message(chinese ? "命令内容不能包含隐藏的终端控制字符" : "Commands cannot contain hidden terminal control characters")
+        }
+    }
+    static func bytes(_ body: String, action: SnippetAction, bracketedPaste: Bool, chinese: Bool = false) throws -> [UInt8] {
+        try validate(body, chinese: chinese)
+        let text = normalized(body)
+        if action == .insert, !bracketedPaste, text.contains("\n") || text.contains("\t") {
+            throw AppFailure.message(chinese ? "此终端尚未启用 Bracketed Paste，无法安全插入多行或制表符。请复制后检查，或选择运行。" : "This terminal has not enabled bracketed paste. Copy and review multiline or tabbed text, or choose Run.")
+        }
+        var bytes: [UInt8]
+        if bracketedPaste { bytes = Array("\u{1b}[200~".utf8) + Array(text.utf8) + Array("\u{1b}[201~".utf8) }
+        else { bytes = Array(text.replacingOccurrences(of: "\n", with: "\r").utf8) }
+        if action == .run { bytes.append(13) }
+        return bytes
+    }
+}
+
+@MainActor extension AppStore {
+    var snippetGroups: [String] {
+        Array(Set(workspace.snippets.map(\.group).filter { !$0.isEmpty })).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+    private func commitSnippets(_ values: [CommandSnippet]) throws {
+        let previous = workspace.snippets
+        workspace.snippets = values
+        guard save() else {
+            workspace.snippets = previous
+            throw AppFailure.message(error ?? text("Could not save snippets", "无法保存代码片段"))
+        }
+    }
+    func saveSnippet(_ original: CommandSnippet) throws {
+        var value = original
+        value.name = value.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        value.group = value.group.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.name.isEmpty else { throw AppFailure.message(text("Enter a snippet name", "请输入片段名称")) }
+        try SnippetInput.validate(value.body, chinese: chinese)
+        value.body = value.body.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        var values = workspace.snippets
+        if let index = values.firstIndex(where: { $0.id == value.id }) { values[index] = value }
+        else { values.append(value) }
+        try commitSnippets(values)
+    }
+    @discardableResult func duplicateSnippet(_ original: CommandSnippet) throws -> CommandSnippet {
+        var value = original; value.id = UUID(); value.name += text(" copy", " 副本")
+        try saveSnippet(value)
+        return value
+    }
+    func removeSnippet(_ id: UUID) throws { try commitSnippets(workspace.snippets.filter { $0.id != id }) }
+    func renameSnippetGroup(_ group: String, to name: String) throws {
+        let target = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { throw AppFailure.message(text("Enter a group name", "请输入分组名称")) }
+        guard target == group || !snippetGroups.contains(target) else { throw AppFailure.message(text("A group with this name already exists", "已有同名分组")) }
+        try commitSnippets(workspace.snippets.map { original in var value = original; if value.group == group { value.group = target }; return value })
+    }
+    func ungroupSnippets(_ group: String) throws {
+        try commitSnippets(workspace.snippets.map { original in var value = original; if value.group == group { value.group = "" }; return value })
+    }
+    func sendSnippet(_ snippet: CommandSnippet, to targetIDs: Set<UUID>, action: SnippetAction) throws {
+        guard !targetIDs.isEmpty else { throw AppFailure.message(text("Choose a connected terminal", "请选择已连接终端")) }
+        let targets = sessions.filter { targetIDs.contains($0.id) }
+        guard targets.count == targetIDs.count, targets.allSatisfy({ $0.connected && $0.terminal != nil }) else {
+            throw AppFailure.message(text("A selected terminal has disconnected. Choose connected terminals again.", "所选终端已断开，请重新选择已连接终端。"))
+        }
+        // Prepare every target before sending anything, so a failed insertion cannot reach only some sessions.
+        let deliveries = try targets.map { session -> (TerminalSession, [UInt8]) in
+            let mode = session.terminal!.terminalStateSnapshot().bracketedPasteMode
+            return (session, try SnippetInput.bytes(snippet.body, action: action, bracketedPaste: mode, chinese: chinese))
+        }
+        for (session, bytes) in deliveries { session.terminal?.send(data: bytes[...]) }
+        if targets.count == 1, let session = targets.first {
+            activeSession = session.id; section = "terminal"
+            if let terminal = session.terminal { terminal.window?.makeFirstResponder(terminal) }
+        }
+    }
+}
+
+struct SnippetsView: View {
+    @EnvironmentObject var store: AppStore
+    @State private var search = ""
+    @State private var newestFirst = false
+    @State private var group: String?
+    @State private var editing: CommandSnippet?
+    @State private var sending: CommandSnippet?
+    @State private var renaming: String?
+    @State private var newGroupName = ""
+    var matching: [CommandSnippet] {
+        let values = store.workspace.snippets.filter { value in
+            (group == nil || value.group == group) && (search.isEmpty || "\(value.name) \(value.group) \(value.notes) \(value.body)".localizedCaseInsensitiveContains(search))
+        }
+        return newestFirst ? Array(values.reversed()) : values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+    var visible: [CommandSnippet] { group == nil && search.isEmpty ? matching.filter { $0.group.isEmpty } : matching }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 14) {
+                VaultSearchField(placeholder: store.text("Search snippets or groups", "搜索片段或分组"), text: $search)
+                HStack {
+                    Button { var value = CommandSnippet(); value.group = group ?? ""; editing = value } label: { Label(store.text("NEW SNIPPET", "新建片段"), systemImage: "plus") }.buttonStyle(ChromeButtonStyle())
+                    Spacer()
+                    Menu {
+                        Button(store.text("Name", "按名称排序")) { newestFirst = false }
+                        Button(store.text("Newest first", "最新添加优先")) { newestFirst = true }
+                    } label: { Label(store.text("Sort", "排序"), systemImage: "arrow.up.arrow.down") }.menuStyle(.borderlessButton).frame(width: 65)
+                }
+            }.padding(12).background(Palette.sidebar)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        if group != nil { Button { group = nil } label: { Image(systemName: "chevron.left") }.buttonStyle(IconButtonStyle()) }
+                        PaneHeading(title: group ?? store.text("Snippets", "代码片段"))
+                        Text("\(matching.count)").font(.caption).foregroundStyle(Palette.muted)
+                        Spacer()
+                    }
+                    if group == nil && search.isEmpty {
+                        ForEach(store.snippetGroups, id: \.self) { name in
+                            Button { group = name } label: {
+                                HStack(spacing: 12) {
+                                    IconTile(symbol: "folder.fill", color: Palette.blue)
+                                    Text(name).font(.system(size: 14, weight: .medium)); Spacer()
+                                    Text("\(store.workspace.snippets.filter { $0.group == name }.count)").foregroundStyle(Palette.muted)
+                                    Image(systemName: "chevron.right").foregroundStyle(Palette.muted)
+                                }.padding(14).contentShape(Rectangle()).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
+                            }.buttonStyle(.plain).contextMenu {
+                                Button(store.text("Rename group", "重命名分组")) { newGroupName = name; renaming = name }
+                                Button(store.text("Remove group, keep snippets", "取消分组，保留片段")) { perform { try store.ungroupSnippets(name) } }
+                            }
+                        }
+                        if !visible.isEmpty && !store.snippetGroups.isEmpty { Text(store.text("Ungrouped", "未分组")).font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.muted).padding(.top, 10) }
+                    }
+                    ForEach(visible) { value in snippetRow(value) }
+                    if matching.isEmpty {
+                        VStack(spacing: 14) {
+                            IconTile(symbol: "curlybraces", color: Palette.blue, size: 56)
+                            Text(search.isEmpty ? store.text("Save commands you use often", "保存常用命令") : store.text("No matching snippets", "没有匹配的代码片段")).font(.system(size: 16, weight: .medium))
+                            Text(store.text("Insert a command for review, or run it in selected connected terminals.", "插入终端后检查，或选择已连接终端运行。"))
+                                .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        }.frame(maxWidth: .infinity).padding(35)
+                    }
+                }.padding(22)
+            }
+        }.foregroundStyle(Palette.text)
+            .sheet(item: $editing) { SnippetEditor(value: $0).environmentObject(store) }
+            .sheet(item: $sending) { SnippetSendSheet(snippet: $0).environmentObject(store) }
+            .alert(store.text("Rename group", "重命名分组"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField(store.text("Name", "名称"), text: $newGroupName)
+                Button(store.text("Cancel", "取消"), role: .cancel) { renaming = nil }
+                Button(store.text("Save", "保存")) { if let name = renaming { perform { try store.renameSnippetGroup(name, to: newGroupName) } }; renaming = nil }
+            }
+    }
+    func snippetRow(_ value: CommandSnippet) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            IconTile(symbol: "curlybraces", color: Palette.blue)
+            Button { editing = value } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack { Text(value.name).font(.system(size: 14, weight: .medium)); if !value.group.isEmpty { Text(value.group).font(.system(size: 11)).foregroundStyle(Palette.muted) } }
+                    Text(value.body).font(.system(size: 12, design: .monospaced)).lineLimit(2).foregroundStyle(Palette.muted)
+                    if !value.notes.isEmpty { Text(value.notes).font(.system(size: 11)).lineLimit(1).foregroundStyle(Palette.muted) }
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Button(store.text("Use", "使用")) { sending = value }.buttonStyle(ChromeButtonStyle())
+            Menu {
+                Button(store.text("Edit", "编辑")) { editing = value }
+                Button(store.text("Copy command", "复制命令")) { copySnippet(value) }
+                Button(store.text("Duplicate", "复制片段")) { perform { _ = try store.duplicateSnippet(value) } }
+                Button(store.text("Delete", "删除"), role: .destructive) { deleteSnippet(value) }
+            } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24).accessibilityLabel(store.text("Snippet actions", "片段操作"))
+        }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
+            .contextMenu {
+                Button(store.text("Use in terminal", "在终端中使用")) { sending = value }
+                Button(store.text("Edit", "编辑")) { editing = value }
+                Button(store.text("Copy command", "复制命令")) { copySnippet(value) }
+                Button(store.text("Duplicate", "复制片段")) { perform { _ = try store.duplicateSnippet(value) } }
+                Button(store.text("Delete", "删除"), role: .destructive) { deleteSnippet(value) }
+            }
+    }
+    func perform(_ action: () throws -> Void) { do { try action() } catch { store.error = error.localizedDescription } }
+    func deleteSnippet(_ value: CommandSnippet) {
+        let alert = NSAlert(); alert.messageText = store.text("Delete snippet?", "删除代码片段？"); alert.informativeText = value.name
+        alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
+        if alert.runModal() == .alertFirstButtonReturn { perform { try store.removeSnippet(value.id) } }
+    }
+}
+
+@MainActor private func copySnippet(_ value: CommandSnippet) {
+    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value.body, forType: .string)
+}
+
+struct SnippetEditor: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    @State var value: CommandSnippet
+    @State private var error = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(store.text("Snippet", "代码片段")).font(.system(size: 19, weight: .semibold))
+            TextField(store.text("Name", "名称"), text: $value.name).appInput()
+            HStack {
+                TextField(store.text("Group (optional)", "分组（可选）"), text: $value.group).appInput()
+                Menu { Button(store.text("Ungrouped", "未分组")) { value.group = "" }; ForEach(store.snippetGroups, id: \.self) { name in Button(name) { value.group = name } } } label: { Image(systemName: "folder") }.menuStyle(.borderlessButton).frame(width: 25)
+            }
+            TextField(store.text("Description (optional)", "说明（可选）"), text: $value.notes).appInput()
+            Text(store.text("Command", "命令内容")).font(.system(size: 12, weight: .medium))
+            SnippetTextEditor(text: $value.body).frame(height: 220).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1))
+            Text(store.text("Use a snippet from the vault or the terminal's Snippets panel.", "可在保险库中使用，或从终端右侧的代码片段面板打开。"))
+                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            if !error.isEmpty { Text(error).font(.system(size: 12)).foregroundStyle(.red) }
+            HStack {
+                Button(store.text("Cancel", "取消")) { dismiss() }.buttonStyle(ChromeButtonStyle())
+                Spacer()
+                Button(store.text("Save", "保存")) { do { try store.saveSnippet(value); dismiss() } catch { self.error = error.localizedDescription } }
+                    .buttonStyle(ChromeButtonStyle(prominent: true)).disabled(value.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || value.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(24).frame(width: 540).foregroundStyle(Palette.text).background(Palette.sidebar)
+    }
+}
+
+struct SnippetSendSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let snippet: CommandSnippet
+    var preferredSessionID: UUID? = nil
+    @State private var selected = Set<UUID>()
+    @State private var error = ""
+    @State private var confirmingRun = false
+    var connected: [TerminalSession] { store.sessions.filter { $0.connected && $0.terminal != nil } }
+    var targets: [TerminalSession] { connected.filter { selected.contains($0.id) } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(snippet.name).font(.system(size: 19, weight: .semibold))
+            ScrollView { Text(snippet.body).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(12) }
+                .frame(height: 145).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
+            HStack { Text(store.text("Connected terminals", "已连接终端")).font(.system(size: 12, weight: .medium)); Spacer(); Button(store.text("Select all", "全选")) { selected = Set(connected.map(\.id)) }.buttonStyle(.plain).foregroundStyle(Palette.accent).disabled(connected.isEmpty) }
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(connected) { session in
+                        Button { if !selected.insert(session.id).inserted { selected.remove(session.id) } } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: selected.contains(session.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(selected.contains(session.id) ? Palette.accent : Palette.muted)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(session.displayTitle).lineLimit(1).truncationMode(.middle)
+                                    Text(session.host.map { "\($0.address):\($0.port)" } ?? store.text("Local terminal", "本地终端")).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                                }; Spacer()
+                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(selected.contains(session.id) ? Palette.selected : Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
+                        }.buttonStyle(.plain)
+                    }
+                    if connected.isEmpty { Text(store.text("Open a local terminal or connect to a host first.", "请先打开本地终端或连接主机。 ")).foregroundStyle(Palette.muted).padding(12) }
+                }
+            }.frame(height: 140)
+            Text(store.text("Insert leaves the command for review. Run sends it and presses Enter in the selected terminals.", "插入后可检查命令；运行会将命令发送到所选终端并按回车。"))
+                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            if !error.isEmpty { Text(error).font(.system(size: 12)).foregroundStyle(.red) }
+            HStack {
+                Button(store.text("Cancel", "取消")) { dismiss() }.buttonStyle(ChromeButtonStyle())
+                Button(store.text("Copy", "复制")) { copySnippet(snippet) }.buttonStyle(ChromeButtonStyle())
+                Spacer()
+                Button(store.text("Insert", "插入")) { send(.insert) }.buttonStyle(ChromeButtonStyle()).disabled(selected.isEmpty)
+                Button(store.text("Run", "运行")) { confirmingRun = true }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(selected.isEmpty)
+            }
+        }.padding(24).frame(width: 570).foregroundStyle(Palette.text).background(Palette.sidebar)
+            .onAppear { if let id = preferredSessionID ?? store.activeSession, connected.contains(where: { $0.id == id }) { selected = [id] } }
+            .alert(store.text("Run snippet?", "运行代码片段？"), isPresented: $confirmingRun) {
+                Button(store.text("Cancel", "取消"), role: .cancel) {}
+                Button(store.text("Run", "运行")) { send(.run) }
+            } message: {
+                Text(store.text("Run \"\(snippet.name)\" in \(targets.count) terminal(s):", "在 \(targets.count) 个终端运行「\(snippet.name)」：") + "\n" + targets.map { session in session.displayTitle + (session.host.map { " · \($0.address):\($0.port)" } ?? "") }.joined(separator: "\n"))
+            }
+    }
+    func send(_ action: SnippetAction) {
+        do { try store.sendSnippet(snippet, to: selected, action: action); dismiss() }
+        catch { self.error = error.localizedDescription }
+    }
+}
+
+struct SnippetTerminalPanel: View {
+    @EnvironmentObject var store: AppStore
+    var sessionID: UUID? = nil
+    var scrollsInternally = true
+    @State private var search = ""
+    @State private var sending: CommandSnippet?
+    @State private var editing: CommandSnippet?
+    var filtered: [CommandSnippet] {
+        store.workspace.snippets.filter { search.isEmpty || "\($0.name) \($0.group) \($0.body)".localizedCaseInsensitiveContains(search) }
+            .sorted { $0.group == $1.group ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.group.localizedStandardCompare($1.group) == .orderedAscending }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(store.text("Snippets", "代码片段")).font(.system(size: 14, weight: .medium)); Spacer()
+                Button { editing = CommandSnippet() } label: { Image(systemName: "plus") }.buttonStyle(WorkspaceIconStyle()).help(store.text("New snippet", "新建片段")).accessibilityLabel(store.text("New snippet", "新建片段"))
+            }
+            HStack { Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted); TextField(store.text("Search snippets", "搜索代码片段"), text: $search).textFieldStyle(.plain).font(.system(size: 12)) }
+                .padding(10).background(Color(hex: "#303249")).clipShape(RoundedRectangle(cornerRadius: 8))
+            if scrollsInternally { ScrollView { snippetList } }
+            else { snippetList }
+        }.foregroundStyle(Palette.chromeText).colorScheme(.dark)
+            .sheet(item: $sending) { SnippetSendSheet(snippet: $0, preferredSessionID: sessionID).environmentObject(store).colorScheme(.light) }
+            .sheet(item: $editing) { SnippetEditor(value: $0).environmentObject(store).colorScheme(.light) }
+    }
+    private var snippetList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(filtered) { value in
+                Button { sending = value } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack { Image(systemName: "curlybraces"); Text(value.name).lineLimit(1); Spacer(minLength: 0) }.font(.system(size: 12, weight: .medium))
+                        if !value.group.isEmpty { Text(value.group).font(.system(size: 10)).foregroundStyle(Palette.muted) }
+                        Text(value.body).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(2)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Color(hex: "#303249").opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
+                }.buttonStyle(.plain).contextMenu {
+                    Button(store.text("Use", "使用")) { sending = value }
+                    Button(store.text("Copy", "复制")) { copySnippet(value) }
+                    Button(store.text("Edit", "编辑")) { editing = value }
+                }
+            }
+            if filtered.isEmpty { Text(store.text("Add frequently used commands with +.", "点击 + 保存常用命令。 ")).font(.system(size: 12)).foregroundStyle(Palette.muted).padding(.vertical, 15) }
+        }
+    }
+}
+
+struct SnippetTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false; scroll.drawsBackground = false
+        let editor = scroll.documentView as! NSTextView; editor.isRichText = false; editor.isEditable = true; editor.isSelectable = true
+        editor.isAutomaticQuoteSubstitutionEnabled = false; editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isAutomaticTextReplacementEnabled = false; editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.isContinuousSpellCheckingEnabled = false; editor.isGrammarCheckingEnabled = false
+        editor.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        editor.textColor = NSColor(hex: "#171A2A"); editor.insertionPointColor = NSColor(hex: "#171A2A"); editor.drawsBackground = false
+        editor.textContainerInset = NSSize(width: 10, height: 10); editor.isHorizontallyResizable = false; editor.isVerticallyResizable = true
+        editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true
+        editor.minSize = .zero; editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editor.delegate = context.coordinator; editor.string = text
+        editor.setAccessibilityLabel("Command / 命令内容")
+        return scroll
+    }
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        if let editor = scroll.documentView as? NSTextView, editor.string != text { editor.string = text }
+    }
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: SnippetTextEditor
+        init(_ parent: SnippetTextEditor) { self.parent = parent }
+        func textDidChange(_ notification: Notification) { if let editor = notification.object as? NSTextView { parent.text = editor.string } }
+    }
+}

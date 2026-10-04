@@ -1,0 +1,16 @@
+Terminal palette sources
+
+Catppuccin palette v1.8.0 (Latte, Frappe, Macchiato, Mocha)
+https://github.com/catppuccin/palette/blob/main/palette.json
+MIT License, Copyright (c) 2021 Catppuccin
+
+Nord colors and terminal ANSI mapping
+https://github.com/nordtheme/nord/blob/develop/src/nord.scss
+https://github.com/nordtheme/iterm2
+MIT License, Copyright (c) 2016-present Sven Greb
+
+Solarized Light/Dark
+https://github.com/altercation/solarized
+MIT License, Copyright (c) 2011 Ethan Schoonover
+
+The four original Axon palettes retain their previous values for saved settings compatibility.
