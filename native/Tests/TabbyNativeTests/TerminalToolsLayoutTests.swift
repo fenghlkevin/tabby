@@ -35,12 +35,13 @@ import XCTest
                     XCTAssertEqual(panel.frame.maxY, original.maxY, accuracy: 1, "Every page stays aligned with the terminal's top edge")
                 } else { original = panel.frame }
                 XCTAssertEqual(panel.frame.height, size.height, accuracy: 1, "Each tool fills the entire terminal height")
-                let controls = ["productivity", "status", "snippets", "theme", "close"]
+                let controls = ["productivity", "status", "snippets", "theme"]
                 var firstSize: NSSize?
                 for id in controls {
                     let control = try button(id, in: hosting)
                     let frame = window.convertToScreen(control.convert(control.bounds, to: nil))
                     XCTAssertTrue(panel.frame.insetBy(dx: -1, dy: -1).contains(frame), "Header control must fit the card")
+                    XCTAssertEqual(frame.height, 48, accuracy: 1, "Each navigation tab has a stable 48pt height")
                     if let firstSize {
                         XCTAssertEqual(frame.width, firstSize.width, accuracy: 1)
                         XCTAssertEqual(frame.height, firstSize.height, accuracy: 1)
@@ -48,6 +49,13 @@ import XCTest
                     if let previous = headerFrames[id] { XCTAssertEqual(frame, previous, "Switching content must not move header buttons") }
                     headerFrames[id] = frame
                 }
+                let close = try button("close", in: hosting)
+                let closeFrame = window.convertToScreen(close.convert(close.bounds, to: nil))
+                XCTAssertTrue(panel.frame.insetBy(dx: -1, dy: -1).contains(closeFrame), "Close control must fit the card")
+                XCTAssertEqual(closeFrame.width, 34, accuracy: 1)
+                XCTAssertEqual(closeFrame.height, 34, accuracy: 1)
+                if let previous = headerFrames["close"] { XCTAssertEqual(closeFrame, previous, "Switching content must not move the close button") }
+                headerFrames["close"] = closeFrame
             }
 
         }
@@ -165,10 +173,12 @@ import XCTest
                 XCTAssertEqual(panel.minY, bounds.minY, accuracy: 1, "The sidebar reaches the workspace bottom")
                 XCTAssertEqual(panel.height, bounds.height - 53, accuracy: 1, "The sidebar fills the workspace below its 53pt title bar")
                 XCTAssertEqual(terminal.frame.width, fullTerminalWidth - TerminalToolsPanel.width, accuracy: 2, "Only the terminal viewport shrinks")
+                if cycle == 0 && size.width == 1400 { try diagnose(hosting, name: "real-workspace-open") }
                 for tool in ["productivity", "status", "snippets", "theme"] {
                     try button(tool, in: hosting).performClick(nil); try await settle(hosting)
                     XCTAssertEqual(window.frame, originalFrame, "Changing tools must not resize the outer window")
                     XCTAssertEqual(try surface(in: hosting).frame, panel)
+                    if cycle == 0 && size.width == 1400 && tool == "snippets" { try diagnose(hosting, name: "real-workspace-snippets") }
                 }
                 if cycle.isMultiple(of: 2) {
                     try button("close", in: hosting).performClick(nil)
@@ -183,6 +193,7 @@ import XCTest
                 XCTAssertEqual(window.frame, originalFrame, "Closing the sidebar must not resize the outer window")
                 XCTAssertEqual(terminal.frame.width, fullTerminalWidth, accuracy: 2)
                 XCTAssertFalse(nodes(hosting).contains { $0.identifier == "axon-terminal-tools-panel" })
+                if cycle == 0 && size.width == 1400 { try diagnose(hosting, name: "real-workspace-closed") }
                 XCTAssertTrue(session.terminal === terminal)
                 XCTAssertTrue(terminal.process.running)
                 XCTAssertEqual(session.generation, generation)

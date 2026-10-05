@@ -115,13 +115,14 @@ import SwiftTerm
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
     }
 
-    func testSchemeCardsFiltersAndFullColorEditorAtBothWidthsKeepDraftUnsaved() async throws {
+    func testSchemeCardsFiltersAndPopupEditorAtBothWidthsKeepDraftUnsaved() async throws {
         _ = NSApplication.shared
         for width: CGFloat in [650, 1100] {
             let draft = ThemeDraftBox()
             let binding = Binding(get: { draft.value }, set: { draft.value = $0 })
             try await withWindow(ScrollViewReader { proxy in ScrollView { TerminalColorPreferencesView(draft: binding, chinese: true, scrollToSection: { proxy.scrollTo($0, anchor: .top) }).padding(24) } }.preferredColorScheme(.light), size: NSSize(width: width, height: 880)) { hosting in
                 try capture(hosting, name: "preferences-theme-library-\(Int(width))")
+                XCTAssertEqual(find(NSScrollView.self, in: hosting).count, 1, "Cards use the surrounding settings page scroll")
                 let cards = find(TerminalThemeCardNativeButton.self, in: hosting)
                 XCTAssertGreaterThanOrEqual(cards.count, 2)
                 let card = try XCTUnwrap(cards.first { $0.theme.id == "dracula" })
@@ -150,19 +151,64 @@ import SwiftTerm
                 XCTAssertTrue(find(TerminalThemeCardNativeButton.self, in: hosting).isEmpty)
                 try capture(hosting, name: "preferences-theme-custom-empty-\(Int(width))")
                 XCTAssertTrue(draft.value.customTerminalThemes.isEmpty)
+                XCTAssertNotNil(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == "axon-theme-empty-create" })
+                XCTAssertFalse(find(NSTextField.self, in: hosting).contains { $0.stringValue.hasPrefix("#") }, "The library no longer contains a long inline editor")
+                let beforeEditing = draft.value
+                hosting.window?.makeKeyAndOrderFront(nil)
                 let edit = try XCTUnwrap(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == "axon-theme-edit-colors" })
-                try activateAt(edit, point: NSPoint(x: 50, y: 15)); try await settle(hosting)
-                let baseFields = find(NSTextField.self, in: hosting).map(\.stringValue)
-                for color in [draft.value.foreground, draft.value.background, draft.value.cursorColor] { XCTAssertTrue(baseFields.contains(color)) }
-                try capture(hosting, name: "preferences-theme-color-editor-\(Int(width))")
-                let ansiEdit = try XCTUnwrap(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == "axon-theme-edit-ansi" })
-                try activateAt(ansiEdit, point: NSPoint(x: 100, y: 15)); try await settle(hosting)
-                let ansiFields = find(NSTextField.self, in: hosting).map(\.stringValue)
-                for color in TerminalTheme.effectiveANSI(draft.value) { XCTAssertTrue(ansiFields.contains(color)) }
-                XCTAssertGreaterThanOrEqual(ansiFields.filter { $0.hasPrefix("#") }.count, 16)
-                try capture(hosting, name: "preferences-theme-ansi-editor-\(Int(width))")
+                edit.performClick(nil)
+                let sheet = try await editorSheet(for: hosting)
+                let editorRoot = try XCTUnwrap(sheet.contentView)
+                let fields = find(NSTextField.self, in: editorRoot).map(\.stringValue)
+                XCTAssertEqual(fields.filter { $0.hasPrefix("#") }.count, 19)
+                for color in [draft.value.foreground, draft.value.background, draft.value.cursorColor] { XCTAssertTrue(fields.contains(color)) }
+                let available = sheet.screen?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+                let expected = TerminalThemeEditorLayout.size(forVisibleSize: available)
+                XCTAssertEqual(sheet.contentLayoutRect.width, expected.width, accuracy: 2, "The popup sizes to its screen instead of the compact parent window")
+                XCTAssertLessThanOrEqual(sheet.frame.width, available.width)
+                XCTAssertLessThanOrEqual(sheet.frame.height, available.height)
+                let cancel = try XCTUnwrap(find(PreferencesRectNativeButton.self, in: editorRoot).first { $0.identifier?.rawValue == "axon-theme-editor-cancel" })
+                try capture(editorRoot, name: "preferences-theme-popup-editor-\(Int(width))")
+                cancel.performClick(nil); try await settle(hosting)
+                XCTAssertEqual(draft.value, beforeEditing, "Cancel never changes the parent settings draft")
+
             }
         }
+    }
+
+    func testActualColorSettingsFillAvailablePaneAtCompactMediumAndWideWidthsWhileOtherPagesKeepTheirCap() async throws {
+        _ = NSApplication.shared
+        let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = AppStore(fileURL: root.appendingPathComponent("workspace.json")); store.workspace.preferences.language = "zh-CN"
+        for width: CGFloat in [650, 1100, 1600] {
+            try await withWindow(PreferencesView(page: .appearance).environmentObject(store).preferredColorScheme(.light), size: NSSize(width: width, height: 1000)) { hosting in
+                try await Task.sleep(for: .milliseconds(160)); try await settle(hosting)
+                let preview = try XCTUnwrap(find(TerminalPreferencesPreviewNativeView.self, in: hosting).first { $0.identifier?.rawValue == "axon-theme-library-preview" })
+                let scrolls = find(NSScrollView.self, in: hosting)
+                XCTAssertEqual(scrolls.count, 1, "The actual settings window has one page scroll")
+                let page = try XCTUnwrap(scrolls.first)
+                let availableContent = page.contentView.bounds.width - 48
+                // Native preview excludes 18pt card padding and its own 12pt
+                // padding on each side. The card must fill the padded pane.
+                XCTAssertEqual(preview.bounds.width + 60, availableContent, accuracy: 2, "The preview card fills the pane instead of leaving a fixed-width blank area")
+                let cards = find(TerminalThemeCardNativeButton.self, in: hosting)
+                let rects = cards.map { $0.convert($0.bounds, to: hosting) }
+                let firstY = try XCTUnwrap(rects.map(\.minY).min())
+                let firstRow = rects.filter { abs($0.minY - firstY) < 2 }
+                let first = try XCTUnwrap(firstRow.first)
+                let span = firstRow.dropFirst().reduce(first) { $0.union($1) }
+                XCTAssertEqual(span.width + 40, availableContent, accuracy: 2, "The library's first card row fills the same pane width")
+                try capture(hosting, name: "preferences-theme-full-pane-\(Int(width))")
+            }
+            try await withWindow(PreferencesView(page: .terminal).environmentObject(store).preferredColorScheme(.light), size: NSSize(width: width, height: 1000)) { hosting in
+                try await Task.sleep(for: .milliseconds(160)); try await settle(hosting)
+                let preview = try XCTUnwrap(find(TerminalPreferencesPreviewNativeView.self, in: hosting).first { $0.identifier?.rawValue == "axon-terminal-font-preview" })
+                let page = try XCTUnwrap(find(NSScrollView.self, in: hosting).first)
+                let cappedContent = min(840, page.contentView.bounds.width) - 48
+                XCTAssertEqual(preview.bounds.width + 64, cappedContent, accuracy: 2, "Other settings pages retain their existing readable width")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path), "Layout and browsing never save the workspace")
     }
 
     func testIncompleteDecodedCustomPaletteRendersSafelyAndCannotBeSaved() async throws {
@@ -179,6 +225,13 @@ import SwiftTerm
             hosting.displayIfNeeded()
             XCTAssertEqual(TerminalTheme.selected(draft.value).name, "Damaged palette")
         }
+    }
+    private func editorSheet(for hosting: NSView) async throws -> NSWindow {
+        for _ in 0..<20 {
+            try await settle(hosting)
+            if let sheet = hosting.window?.attachedSheet { sheet.contentView?.layoutSubtreeIfNeeded(); return sheet }
+        }
+        return try XCTUnwrap(hosting.window?.attachedSheet, "Editing colors must open a sheet")
     }
     private final class ThemeDraftBox { var value = Preferences() }
     private func temporaryDirectory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("axon-theme-library-" + UUID().uuidString) }

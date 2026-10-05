@@ -31,41 +31,41 @@ struct MonitoringTerminalPanel: View {
                     metric(store.text("Memory", "内存"), value: percent(snapshot.memory?.usedPercent), color: Color(hex: "#B084E2"))
                     if snapshot.cpu != nil && snapshot.cpu?.usagePercent == nil {
                         Text(store.text("CPU and rates need two consecutive samples.", "CPU 和速率将在连续两次采样后显示。"))
-                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                            .font(.system(size: 11)).foregroundStyle(TerminalChrome.muted)
                     }
                     if let load = snapshot.load {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(store.text("Load · 1 / 5 / 15 min", "负载 · 1 / 5 / 15 分钟")).foregroundStyle(Palette.muted)
+                            Text(store.text("Load · 1 / 5 / 15 min", "负载 · 1 / 5 / 15 分钟")).foregroundStyle(TerminalChrome.muted)
                             HStack { Text(String(format: "%.2f", load.oneMinute)); Spacer(); Text(String(format: "%.2f", load.fiveMinutes)); Spacer(); Text(String(format: "%.2f", load.fifteenMinutes)) }.monospacedDigit()
-                        }.padding(12).background(Color.white.opacity(0.045)).clipShape(RoundedRectangle(cornerRadius: 10))
+                        }.padding(12).background(TerminalChrome.card).clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     if let memory = snapshot.memory {
                         summary(store.text("Used / total", "已用 / 总内存"), value: bytes(memory.usedBytes) + " / " + bytes(memory.totalBytes))
                         summary("Swap", value: bytes(memory.swapUsedBytes) + " / " + bytes(memory.swapTotalBytes))
                     }
                     if let network = snapshot.interfaces.first(where: { $0.name != "lo" }) {
-                        Divider().overlay(Color.white.opacity(0.1))
-                        Text(network.name).foregroundStyle(Palette.muted)
+                        Rectangle().fill(TerminalChrome.border.opacity(0.6)).frame(height: 1)
+                        Text(network.name).foregroundStyle(TerminalChrome.muted)
                         summary(store.text("Upload", "上传"), value: rate(network.transmitBytesPerSecond))
                         summary(store.text("Download", "下载"), value: rate(network.receiveBytesPerSecond))
                     }
                     if !snapshot.processes.isEmpty {
-                        Divider().overlay(Color.white.opacity(0.1))
-                        Text(store.text("Processes · CPU average", "进程 · CPU 平均")).foregroundStyle(Palette.muted)
+                        Rectangle().fill(TerminalChrome.border.opacity(0.6)).frame(height: 1)
+                        Text(store.text("Processes · CPU average", "进程 · CPU 平均")).foregroundStyle(TerminalChrome.muted)
                         ForEach(snapshot.processes.sorted { ($0.cpuPercent ?? -1) > ($1.cpuPercent ?? -1) }.prefix(3)) { process in
                             summary(process.command, value: percent(process.cpuPercent))
                         }
                     }
-                    HStack { Text(store.text("Last successful sample", "上次成功采样")); Text(snapshot.timestamp, style: .time) }.font(.system(size: 10)).foregroundStyle(Palette.muted)
+                    HStack { Text(store.text("Last successful sample", "上次成功采样")); Text(snapshot.timestamp, style: .time) }.font(.system(size: 10)).foregroundStyle(TerminalChrome.muted)
                 } else if let snapshot, !snapshot.isSupported {
                     Text(store.text("This host runs \(snapshot.os). Monitoring currently supports Linux.", "此主机运行 \(snapshot.os)，当前监控支持 Linux。"))
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 12)).foregroundStyle(TerminalChrome.muted)
                 } else if session.connected {
                     Text(store.text("Waiting for a sample. Sampling runs while this panel is visible and Axon is in the foreground.", "等待采样。此面板可见且 Axon 位于前台时采集。"))
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 12)).foregroundStyle(TerminalChrome.muted)
                 } else {
                     Text(store.text("Connect this SSH session to view its status.", "连接此 SSH 会话后可查看状态。"))
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 12)).foregroundStyle(TerminalChrome.muted)
                 }
                 Button {
                     center.select(id)
@@ -74,25 +74,25 @@ struct MonitoringTerminalPanel: View {
                     .buttonStyle(.plain).foregroundStyle(Palette.accent).background(Color.white.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 Text(store.text("Status is available for connected Linux SSH sessions. Select a remote terminal to view it here.", "状态面板用于已连接的 Linux SSH 会话。选择远程终端后可在这里查看。"))
-                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    .font(.system(size: 12)).foregroundStyle(TerminalChrome.muted)
             }
         }.font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
     }
     @ViewBuilder private func status(_ state: MonitoringState) -> some View {
         switch state {
         case .collecting: Label(store.text("Monitoring · about every 5 s", "监控中 · 约每 5 秒"), systemImage: "waveform.path.ecg").foregroundStyle(Palette.accent)
-        case .paused: Label(store.text("Sampling paused", "采样已暂停"), systemImage: "pause.circle").foregroundStyle(Palette.muted)
-        case .disconnected: Label(store.text("SSH disconnected", "SSH 未连接"), systemImage: "circle").foregroundStyle(Palette.muted)
+        case .paused: Label(store.text("Sampling paused", "采样已暂停"), systemImage: "pause.circle").foregroundStyle(TerminalChrome.muted)
+        case .disconnected: Label(store.text("SSH disconnected", "SSH 未连接"), systemImage: "circle").foregroundStyle(TerminalChrome.muted)
         case .error(let message): Label(message, systemImage: "exclamationmark.circle").foregroundStyle(Color(hex: "#F39E74")).fixedSize(horizontal: false, vertical: true)
-        case .unsupported(let message): Label(message, systemImage: "info.circle").foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+        case .unsupported(let message): Label(message, systemImage: "info.circle").foregroundStyle(TerminalChrome.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
     private func summary(_ title: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) { Text(title).foregroundStyle(Palette.muted).lineLimit(1); Spacer(minLength: 8); Text(value).monospacedDigit().lineLimit(1) }
+        HStack(alignment: .firstTextBaseline) { Text(title).foregroundStyle(TerminalChrome.muted).lineLimit(1); Spacer(minLength: 8); Text(value).monospacedDigit().lineLimit(1) }
     }
     private func metric(_ title: String, value: String, color: Color) -> some View {
-        HStack { Text(title).foregroundStyle(Palette.muted); Spacer(); Text(value).font(.system(size: 24, weight: .semibold)).monospacedDigit().foregroundStyle(color) }
-            .padding(12).background(Color.white.opacity(0.045)).clipShape(RoundedRectangle(cornerRadius: 10))
+        HStack { Text(title).foregroundStyle(TerminalChrome.muted); Spacer(); Text(value).font(.system(size: 24, weight: .semibold)).monospacedDigit().foregroundStyle(color) }
+            .padding(12).background(TerminalChrome.card).clipShape(RoundedRectangle(cornerRadius: 10))
     }
     private func percent(_ value: Double?) -> String { value.map { String(format: "%.1f%%", $0) } ?? "—" }
     private func canRefresh(_ id: MonitoringTargetID) -> Bool {

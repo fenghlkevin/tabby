@@ -40,6 +40,7 @@ struct PreferencesView: View {
     @State private var saved = false
     @State private var loaded = false
     @State private var draftRevision = 0
+    @State private var colorCommitSnapshot: Preferences?
     init(page: PreferencesPage = .general, selection: Binding<PreferencesPage>? = nil, showsSidebar: Bool = true) {
         _localPage = State(initialValue: page); self.selection = selection; self.showsSidebar = showsSidebar
     }
@@ -57,7 +58,8 @@ struct PreferencesView: View {
                         VStack(alignment: .leading, spacing: 20) {
                             PaneHeading(title: page.title(chinese: store.chinese), subtitle: subtitle).id("axon-preferences-heading")
                             pageContent(scrollToSection: { proxy.scrollTo($0, anchor: .top) }).id(draftRevision)
-                        }.padding(24).frame(maxWidth: 840, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
+                        }.padding(24).frame(maxWidth: page == .appearance ? .infinity : 840, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }.background(Palette.background)
                         .onChange(of: page) { _, _ in proxy.scrollTo("axon-preferences-heading", anchor: .top) }
                 }
@@ -73,7 +75,10 @@ struct PreferencesView: View {
         }.foregroundStyle(Palette.text).font(.system(size: 13)).frame(minWidth: 650, minHeight: 520)
             .onAppear { if !loaded { reload(); loaded = true } }
             .onChange(of: draft) { _, _ in saved = false; error = "" }
-            .onChange(of: store.workspace.preferences) { _, _ in reload() }
+            .onChange(of: store.workspace.preferences) { _, value in
+                if colorCommitSnapshot == value { colorCommitSnapshot = nil }
+                else { reload() }
+            }
     }
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -102,7 +107,7 @@ struct PreferencesView: View {
         switch page {
         case .general: general
         case .terminal: terminal
-        case .appearance: TerminalColorPreferencesView(draft: $draft, chinese: store.chinese, scrollToSection: scrollToSection)
+        case .appearance: TerminalColorPreferencesView(draft: $draft, chinese: store.chinese, scrollToSection: scrollToSection, commit: saveTerminalColors)
         case .keyboard: keyboard
         case .connection: connection
         case .importHosts: ImportPreferencesPane()
@@ -195,6 +200,12 @@ struct PreferencesView: View {
         }
     }
     private func reload() { draft = store.workspace.preferences; fontSizeInput = TerminalFontSizeNativeEditor.display(draft.fontSize); scrollbackValid = true; fontSizeValid = true; timeoutValid = true; error = ""; saved = false; draftRevision += 1 }
+    private func saveTerminalColors(_ value: Preferences) throws {
+        try store.commitTerminalColors(value)
+        colorCommitSnapshot = store.workspace.preferences
+        draft = draft.replacingTerminalColors(from: store.workspace.preferences)
+        error = ""
+    }
     private func save() {
         guard validNumbers else { return }
         do { try store.commitPreferences(draft); draft = store.workspace.preferences; saved = true; error = "" }

@@ -243,22 +243,88 @@ func parseQuickHost(_ text: String) -> Host? {
 struct KnownHostsView: View {
     @EnvironmentObject var store: AppStore
     @State private var search = ""
-    var endpoints: [String] { store.workspace.trustedKeys.keys.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }.sorted() }
+    @State private var removalEndpoint: String?
+    @State private var copiedEndpoint: String?
+    private var endpoints: [String] {
+        store.workspace.trustedKeys.keys.filter { endpoint in
+            let identity = store.workspace.trustedKeys[endpoint].flatMap { KnownHostIdentity(openSSHPublicKey: $0) }
+            return search.isEmpty || endpoint.localizedCaseInsensitiveContains(search)
+                || identity?.algorithm.localizedCaseInsensitiveContains(search) == true
+                || identity?.fingerprint.localizedCaseInsensitiveContains(search) == true
+        }.sorted()
+    }
     var body: some View {
         VStack(spacing: 0) {
             VaultSearchField(placeholder: store.text("Search known hosts", "搜索已知主机"), text: $search).padding(12).background(Palette.sidebar)
             ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PaneHeading(title: store.text("Known hosts", "已知主机"), subtitle: store.text("Server identities verified when connecting.", "已在连接时确认的服务器身份。"))
+                PaneHeading(title: store.text("Known hosts", "已知主机"), subtitle: store.text("Saved server public keys verify identity on each connection.", "保存服务器公钥，在每次连接时校验服务器身份。"))
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "checkmark.shield").foregroundStyle(Palette.blue).accessibilityHidden(true)
+                    Text(store.text("The host library stores connection settings; known hosts store trusted server identities. If a server key changes, the connection is blocked. After verifying a replacement key, remove its old trust record and reconnect.", "主机库保存连接配置；已知主机保存已信任的服务器身份。服务器密钥变化时会阻止连接。确认服务器更换密钥后，可移除旧记录并重新连接。"))
+                        .font(.system(size: 12)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+                }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.sidebar).clipShape(RoundedRectangle(cornerRadius: 10))
                 if store.workspace.trustedKeys.isEmpty {
                     ContentUnavailableView(store.text("No verified servers yet", "尚未确认服务器"), systemImage: "checkmark.shield", description: Text(store.text("Server fingerprints appear here after your first connection.", "首次确认主机指纹后，服务器会显示在这里。")))
+                } else if endpoints.isEmpty {
+                    ContentUnavailableView.search(text: search)
                 }
                 ForEach(endpoints, id: \.self) { endpoint in
-                    HStack(spacing: 14) { IconTile(symbol: "checkmark.shield", color: Palette.blue); VStack(alignment: .leading, spacing: 6) { Text(endpoint).font(.system(size: 14, weight: .medium)); Text(store.workspace.trustedKeys[endpoint]?.split(separator: " ").first.map(String.init) ?? "SSH").font(.system(size: 11)).foregroundStyle(Palette.muted) }; Spacer(); Text(store.text("Verified", "已确认")).font(.system(size: 12)).foregroundStyle(Palette.accent) }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
+                    knownHostCard(endpoint)
                 }
             }.padding(22)
             }
         }.background(Palette.background)
+            .alert(store.text("Remove server trust?", "移除服务器信任？"), isPresented: Binding(
+                get: { removalEndpoint != nil }, set: { if !$0 { removalEndpoint = nil } }), presenting: removalEndpoint) { endpoint in
+                Button(store.text("Cancel", "取消"), role: .cancel) { removalEndpoint = nil }
+                Button(store.text("Remove trust", "移除信任"), role: .destructive) {
+                    _ = store.removeKnownHost(endpoint)
+                    removalEndpoint = nil
+                }
+            } message: { endpoint in
+                Text(endpoint + "\n" + store.text("The next connection will ask you to verify the server fingerprint again. Saved hosts and credentials will remain available.", "下次连接时需要重新确认服务器指纹。主机配置和凭据会保留。"))
+            }
+    }
+    private func knownHostCard(_ endpoint: String) -> some View {
+        let identity = store.workspace.trustedKeys[endpoint].flatMap { KnownHostIdentity(openSSHPublicKey: $0) }
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                IconTile(symbol: "checkmark.shield", color: Palette.blue)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(endpoint).font(.system(size: 14, weight: .semibold)).textSelection(.enabled)
+                    Text(identity?.algorithm ?? store.text("Unreadable public key", "公钥记录不可读"))
+                        .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                }
+                Spacer(minLength: 12)
+                Text(identity == nil ? store.text("Check record", "检查记录") : store.text("Trusted", "已信任"))
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(identity == nil ? Palette.muted : Palette.blue)
+                    .padding(.horizontal, 9).padding(.vertical, 5).background(Palette.blue.opacity(0.08))
+                    .clipShape(Capsule())
+                Button { removalEndpoint = endpoint } label: { Label(store.text("Remove trust", "移除信任"), systemImage: "trash") }
+                    .buttonStyle(ChromeButtonStyle()).accessibilityIdentifier("axon-known-host-remove-" + endpoint)
+            }
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(store.text("Server fingerprint", "服务器指纹")).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    Text(identity?.fingerprint ?? store.text("Fingerprint unavailable", "无法读取指纹"))
+                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.text)
+                        .textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                        .help(identity?.fingerprint ?? "")
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    guard let fingerprint = identity?.fingerprint else { return }
+                    NSPasteboard.general.clearContents()
+                    if NSPasteboard.general.setString(fingerprint, forType: .string) { copiedEndpoint = endpoint }
+                } label: {
+                    Label(copiedEndpoint == endpoint ? store.text("Copied", "已复制") : store.text("Copy", "复制"),
+                          systemImage: copiedEndpoint == endpoint ? "checkmark" : "doc.on.doc")
+                }.buttonStyle(ChromeButtonStyle()).disabled(identity == nil)
+                    .accessibilityLabel(store.text("Copy server fingerprint", "复制服务器指纹"))
+                    .accessibilityIdentifier("axon-known-host-copy-" + endpoint)
+            }.padding(12).background(Palette.sidebar).clipShape(RoundedRectangle(cornerRadius: 8))
+        }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

@@ -45,7 +45,7 @@ class PreferencesRectNativeButton: NSButton {
         return true
     }
     override func draw(_ dirtyRect: NSRect) {
-        let background = prominent ? NSColor(Palette.accent) : NSColor(hovering || selected || isHighlighted ? Palette.selected : Palette.field)
+        let background = prominent ? NSColor(destructive ? Palette.danger : Palette.accent) : NSColor(hovering || selected || isHighlighted ? Palette.selected : Palette.field)
         background.withAlphaComponent(isEnabled ? (isHighlighted ? 0.72 : 1) : 0.4).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
         let textColor = prominent ? NSColor.white : destructive ? NSColor.systemRed : NSColor(Palette.text)

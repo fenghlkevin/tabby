@@ -81,11 +81,20 @@ struct ForwardRuleEditor: View {
 struct LogsView: View {
     @EnvironmentObject var store: AppStore
     @State private var search = ""
+    @State private var confirmingClear = false
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 14) {
                 VaultSearchField(placeholder: store.text("Search logs", "搜索日志"), text: $search)
-                HStack { Button { export() } label: { Label(store.text("EXPORT", "导出"), systemImage: "square.and.arrow.up") }.buttonStyle(ChromeButtonStyle()); Spacer() }
+                HStack {
+                    Button { export() } label: { Label(store.text("EXPORT", "导出"), systemImage: "square.and.arrow.up") }
+                        .buttonStyle(ChromeButtonStyle())
+                    Spacer()
+                    Button { confirmingClear = true } label: { Label(store.text("Clear logs", "清空日志"), systemImage: "trash") }
+                        .buttonStyle(ChromeButtonStyle())
+                        .disabled(store.workspace.logs.isEmpty)
+                        .accessibilityIdentifier("axon-clear-logs")
+                }
             }.padding(12).background(Palette.sidebar)
             HStack { PaneHeading(title: store.text("Logs", "日志"), subtitle: store.text("Last 500 connection and forwarding events.", "最近 500 条连接与转发事件。")); Spacer() }.padding(22)
             ScrollView { LazyVStack(alignment: .leading, spacing: 10) {
@@ -94,6 +103,12 @@ struct LogsView: View {
                 }
                 if store.workspace.logs.isEmpty { Text(store.text("Connection and forwarding events appear here.", "连接或启动转发后，事件会显示在这里。 ")).foregroundStyle(Palette.muted).padding(30).frame(maxWidth: .infinity) }
             }.padding(.horizontal, 22) }
+        }
+        .alert(store.text("Clear all logs?", "清空全部日志？"), isPresented: $confirmingClear) {
+            Button(store.text("Cancel", "取消"), role: .cancel) {}
+            Button(store.text("Clear all logs", "清空全部日志"), role: .destructive) { store.clearActivityLogs() }
+        } message: {
+            Text(store.text("All \(store.workspace.logs.count) saved events will be removed, including those hidden by search. This cannot be undone. New events will continue to appear here.", "将清空全部 \(store.workspace.logs.count) 条记录，包括搜索未显示的记录。此操作无法撤销，之后的新事件仍会继续记录。"))
         }
     }
     func export() {

@@ -143,18 +143,11 @@ final class PreferencesTests: XCTestCase {
             XCTAssertEqual(hosting.bounds.width, 650, accuracy: 1)
             if page == .appearance {
                 let edit = try XCTUnwrap(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == "axon-theme-edit-colors" })
-                edit.performClick(nil)
-                try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
-                let reset = try XCTUnwrap(find(PreferencesThemeResetNativeButton.self, in: hosting).first)
-                XCTAssertEqual(reset.identifier?.rawValue, "axon-preferences-restore-theme")
-                reset.performClick(nil)
-                try await Task.sleep(for: .milliseconds(100)); hosting.layoutSubtreeIfNeeded()
-                let fields = find(NSTextField.self, in: hosting).map(\.stringValue)
-                XCTAssertTrue(fields.contains(Palette.terminalForeground))
-                XCTAssertTrue(fields.contains(Palette.terminalBackground))
-                XCTAssertTrue(fields.contains("#bbbbbb"))
-                XCTAssertFalse(fields.contains("#123456"))
-                XCTAssertEqual(store.workspace.preferences.foreground, "#123456", "Restore only resets the draft; Save is still required")
+                XCTAssertTrue(edit.isEnabled)
+                XCTAssertNotNil(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == "axon-theme-create" })
+                XCTAssertTrue(find(PreferencesThemeResetNativeButton.self, in: hosting).isEmpty, "Color editing moved to a popup")
+                XCTAssertFalse(find(NSTextField.self, in: hosting).contains { $0.stringValue.hasPrefix("#") }, "The settings page shows a library instead of inline color fields")
+                XCTAssertEqual(store.workspace.preferences.foreground, "#123456", "Browsing settings leaves the saved palette unchanged")
                 XCTAssertEqual(store.workspace.preferences.background, "#345678")
             }
             if let path = ProcessInfo.processInfo.environment["AXON_UI_CAPTURE_DIR"] {

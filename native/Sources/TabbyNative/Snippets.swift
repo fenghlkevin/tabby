@@ -316,41 +316,105 @@ struct SnippetTerminalPanel: View {
     @State private var search = ""
     @State private var sending: CommandSnippet?
     @State private var editing: CommandSnippet?
+    @State private var hoveredSnippet: UUID?
     var filtered: [CommandSnippet] {
         store.workspace.snippets.filter { search.isEmpty || "\($0.name) \($0.group) \($0.body)".localizedCaseInsensitiveContains(search) }
             .sorted { $0.group == $1.group ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.group.localizedStandardCompare($1.group) == .orderedAscending }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(store.text("Snippets", "代码片段")).font(.system(size: 14, weight: .medium)); Spacer()
-                Button { editing = CommandSnippet() } label: { Image(systemName: "plus") }.buttonStyle(WorkspaceIconStyle()).help(store.text("New snippet", "新建片段")).accessibilityLabel(store.text("New snippet", "新建片段"))
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text(store.text("Snippets", "代码片段")).font(.system(size: 15, weight: .semibold))
+                Text("\(filtered.count)")
+                    .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(TerminalChrome.muted)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(TerminalChrome.card).clipShape(Capsule())
+                Spacer(minLength: 4)
+                Button { editing = CommandSnippet() } label: {
+                    Label(store.text("New", "新建"), systemImage: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 9).frame(height: 28)
+                        .foregroundStyle(TerminalChrome.accent)
+                        .background(TerminalChrome.accent.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(TerminalChrome.accent.opacity(0.2), lineWidth: 1))
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).help(store.text("New snippet", "新建片段")).accessibilityLabel(store.text("New snippet", "新建片段"))
             }
-            HStack { Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted); TextField(store.text("Search snippets", "搜索代码片段"), text: $search).textFieldStyle(.plain).font(.system(size: 12)) }
-                .padding(10).background(Color(hex: "#303249")).clipShape(RoundedRectangle(cornerRadius: 8))
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(TerminalChrome.muted)
+                TextField(store.text("Search snippets", "搜索代码片段"), text: $search)
+                    .textFieldStyle(.plain).font(.system(size: 12))
+            }.padding(.horizontal, 11).frame(height: 36)
+                .background(TerminalChrome.field).clipShape(RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(TerminalChrome.border.opacity(0.65), lineWidth: 1))
             if scrollsInternally { ScrollView { snippetList } }
             else { snippetList }
-        }.foregroundStyle(Palette.chromeText).colorScheme(.dark)
+        }.foregroundStyle(TerminalChrome.text).colorScheme(.dark)
             .sheet(item: $sending) { SnippetSendSheet(snippet: $0, preferredSessionID: sessionID).environmentObject(store).colorScheme(.light) }
             .sheet(item: $editing) { SnippetEditor(value: $0).environmentObject(store).colorScheme(.light) }
     }
     private var snippetList: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(filtered) { value in
                 Button { sending = value } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { Image(systemName: "curlybraces"); Text(value.name).lineLimit(1); Spacer(minLength: 0) }.font(.system(size: 12, weight: .medium))
-                        if !value.group.isEmpty { Text(value.group).font(.system(size: 10)).foregroundStyle(Palette.muted) }
-                        Text(value.body).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(2)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Color(hex: "#303249").opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
-                }.buttonStyle(.plain).contextMenu {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 9) {
+                            Image(systemName: "curlybraces")
+                                .font(.system(size: 13, weight: .medium)).foregroundStyle(TerminalChrome.accent)
+                                .frame(width: 28, height: 28)
+                                .background(TerminalChrome.accent.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 7))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(value.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                HStack(spacing: 5) {
+                                    if !value.group.isEmpty {
+                                        Text(value.group).lineLimit(1)
+                                        Text("·")
+                                    }
+                                    Text(store.text("\(lineCount(value)) " + (lineCount(value) == 1 ? "line" : "lines"), "\(lineCount(value)) 行")).fixedSize()
+                                }.font(.system(size: 10)).foregroundStyle(TerminalChrome.muted)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(TerminalChrome.muted.opacity(0.7))
+                        }
+                        Text(value.body).font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(TerminalChrome.text.opacity(0.85)).lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 9).padding(.vertical, 8)
+                            .background(TerminalChrome.field.opacity(0.85)).clipShape(RoundedRectangle(cornerRadius: 6))
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(11)
+                        .background(TerminalChrome.card).clipShape(RoundedRectangle(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11).stroke(hoveredSnippet == value.id ? TerminalChrome.accent.opacity(0.55) : TerminalChrome.border.opacity(0.55), lineWidth: 1))
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .onHover { hovering in hoveredSnippet = hovering ? value.id : (hoveredSnippet == value.id ? nil : hoveredSnippet) }
+                    .animation(.easeOut(duration: 0.12), value: hoveredSnippet == value.id)
+                    .contextMenu {
                     Button(store.text("Use", "使用")) { sending = value }
                     Button(store.text("Copy", "复制")) { copySnippet(value) }
                     Button(store.text("Edit", "编辑")) { editing = value }
                 }
             }
-            if filtered.isEmpty { Text(store.text("Add frequently used commands with +.", "点击 + 保存常用命令。 ")).font(.system(size: 12)).foregroundStyle(Palette.muted).padding(.vertical, 15) }
+            if filtered.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: search.isEmpty ? "curlybraces.square" : "magnifyingglass")
+                        .font(.system(size: 25, weight: .light)).foregroundStyle(TerminalChrome.accent.opacity(0.8))
+                    Text(search.isEmpty ? store.text("Save your frequent commands", "保存常用命令") : store.text("No matching snippets", "没有匹配的代码片段"))
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(TerminalChrome.text)
+                    Text(search.isEmpty ? store.text("Choose New to keep commands close to your terminal.", "点击新建，将常用命令保存在终端旁。") : store.text("Try another name, group, or command.", "试试其他名称、分组或命令。"))
+                        .font(.system(size: 11)).foregroundStyle(TerminalChrome.muted)
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity).padding(.horizontal, 14).padding(.vertical, 28)
+                    .background(TerminalChrome.field.opacity(0.45)).clipShape(RoundedRectangle(cornerRadius: 11))
+                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(TerminalChrome.border.opacity(0.45), lineWidth: 1))
+            }
         }
+    }
+    private func lineCount(_ value: CommandSnippet) -> Int {
+        value.body.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 }
 

@@ -183,6 +183,7 @@ enum Palette {
     static let text = Color(hex: "#171A2A")
     static let muted = Color(hex: "#7B8A92")
     static let accent = Color(hex: "#2E91EC")
+    static let danger = Color(hex: "#C42B38")
     static let blue = Color(hex: "#075479")
     static let orange = Color(hex: "#075479")
     static let chrome = Color(hex: "#303249")

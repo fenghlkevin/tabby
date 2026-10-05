@@ -403,3 +403,61 @@
 - 独立 Release 副本使用临时工作区、20 条测试片段和本地 `/bin/sh`。CUA 实际打开终端工具、点击四页；完整实屏确认设置页／会话工具页高度贴合内容、侧栏左右边缘一致、片段长列表到终端底边为止，搜索「19」后收缩为单条且顶部栏保留。一次 ScreenCaptureKit 参数错误和两次变形截图未计为视觉证据；重新绑定窗口／执行已暴露的 Raise 后取得正常完整截图。未运行测试片段、未使用真实凭据／远程服务。结果 `/private/tmp/axon-0.7.4-qa/verification-result.json`。测试 PID 51102 和 shell 51204 均随退出结束，应用包与临时工作区已清理。
 - Release 构建 68.67 秒，0.7.4 (40)、AppIcon-40、arm64；干净发布包严格签名、ZIP 完整性及关键文件字节一致性通过，沿用既有签名要求。日志 `/private/tmp/axon-0.7.4-package.log`、结果 `/private/tmp/axon-0.7.4-package-result.json`。二进制 SHA256 `249ed79f4706ddcb6a6dd7c1e1e35131d29d5cbca7d5a204989cf4d6b893ccb4`，ZIP SHA256 `e0b8001f0f8f79ce7d65250e385d12c961db7a5f8b03010c1798a2dbb3e722de`。
 - 已安装 `/Applications/Axon.app`，旧 0.7.3 备份于 `/Users/fengheliang/Library/Application Support/TabbyNative/InstallBackups/Axon-20261004-222311-f6d74eba.app`。安装前后用户 workspace.json 逐字节一致、保留 black 图标；版本、常规签名与关键文件 SHA256 通过，Finder 自定义元数据状态不宣称 strict，干净包已先严格验证。结果 `/private/tmp/axon-0.7.4-install-result.json`。用户原 PID 33152 保持，需明确退出后重新打开加载新版；LaunchServices 已登记。
+
+
+## 0.7.8 删除主机确认弹窗（2026-10-05）
+
+- 主机卡片删除入口改用 440×304 pt 的白色原生 NSPanel：小型红色垃圾桶、左对齐标题、名称／SSH 地址信息卡、灰色取消和红色删除按钮。去除系统应用 Logo 与玻璃背景；显式忽略透明标题栏安全区，保留底部 16 pt 留白。长名称最多两行，空名称回退地址，IPv6 使用方括号；连接信息解析当前分组／共享身份设置。
+- 仅明确确认后调用现有删除事务；取消、关闭、Esc 与默认 Return 均返回取消。确认窗口结束后清理并恢复父窗口焦点，其他控制器无法停止当前模态；成功删除后独立清理相同主机的选择和详情状态，保留现有失败处理。通用原生操作按钮在同时 prominent/destructive 时使用红色填充。
+- 相关专项 32 个不同用例通过，0 失败、0 跳过，18.366 秒，日志 `/private/tmp/axon-0.7.8-tests.log`。最终修正标题栏留白及翻转坐标边距审查后，删除专项 3 项全部通过，0 失败、0 跳过，1.921 秒，日志 `/private/tmp/axon-0.7.8-final-margin-tests.log`；不将重跑项相加。实际覆盖确认、取消、关闭、Return、Esc、模态隔离，及中英文／长名／空名／IPv6 五组真实渲染与 AX 边界。原生 PNG 和布局数据 `/private/tmp/axon-host-delete-ui/` 已检查，底部按钮完整可见。
+- 独立签名 Release 副本使用随机 UUID 的临时主机和临时 workspace。CUA 右键卡片→删除，实际打开新版确认面板；Return 取消后仍显示 1 台原主机。没有连接远程主机、读取真实凭据或删除生产主机。测试应用已退出，PID 13793 已不存在，记录 `/private/tmp/axon-host-delete-qa/verification-result.json`。
+- 最终 Release 构建 61.01 秒，0.7.8 (44)、AppIcon-44；打包脚本严格签名检查通过，ZIP 完整性、二进制及 Info.plist 字节一致性通过。日志 `/private/tmp/axon-0.7.8-final-package.log`。
+- 自动审批最初因未获明确安装授权拒绝更新；用户随后明确指示“直接更新，不用备份”，已据此直接安装 `/Applications/Axon.app`，未创建备份。沿用安装版签名要求并保留 Finder 自定义图标；常规签名、版本与关键文件 SHA256 通过。用户 workspace.json 安装前后字节哈希一致，原生产 PID 2299 保持运行，没有中断会话；需退出后重新打开加载新版。LaunchServices 已登记。结果 `/private/tmp/axon-0.7.8-install-result.json`。
+- 二进制 SHA256 `81aa4746c095b6e6aa0b7692b71ab0755c32210701dcee38e95514f7eeb442d2`；ZIP SHA256 `8718829b313344dd6d8e1f2b6ea536d870566abdef5fc147ca2063b4ce232c89`。
+
+
+## 0.7.9 终端顶栏与工具面板重新设计（2026-10-05）
+
+- 顶部 52 pt 工作区栏统一使用 #303249 蓝灰底色，终端下方仍使用原终端主题；两者用 #41475E 细线区分。原交通灯、标签、拖动区域和会话动作保持。
+- 右侧面板保持 320 pt 宽度与工作区完整高度；132 pt 固定标题区增加“终端工具”和当前会话名称／连接指示，四项等宽 48 pt 带文字导航与独立 34 pt 关闭按钮。使用蓝色选中态、深色输入表面、卡片层次、轻微左侧边界阴影；工具 UI 色彩独立于终端 ANSI／前景设置。
+- 代码片段增加筛选数量、新建按钮、名称／分组／行数及独立的两行代码预览；保留搜索、排序、发送／编辑工作流和右键行为。统一状态面板和设置动作的深色表面；空列表及无匹配状态提供明确说明。英文单行使用“1 line”。
+- 相关 21 个不同用例全部通过，0 失败、0 跳过，49.698 秒，日志 `/private/tmp/axon-0.7.9-tests.log`。覆盖 1050／1400 宽度与不同高度、四页切换、长列表滚动和筛选、真实 shell、反复开合／快速反转动画、标签动作和命令片段安全发送。修正选中背景透明度后，切页／渲染专项 1 项通过，5.801 秒，日志 `/private/tmp/axon-0.7.9-render-tests.log`；不重复累计用例。截图和 AX 记录 `/private/tmp/axon-0.7.9-ui/` 已检查，旧 full-workspace 位图含修正前的选中蓝块，不用作最终视觉证据，SwiftTerm cacheDisplay 黑底也不作为终端主题证据。
+- CUA 独立 Release 副本使用临时工作区、4 个测试片段及本地 /bin/sh。实际实屏确认新顶栏与原绿色终端分层，标题／当前会话信息、外观页和代码卡片显示完整；搜索“磁盘”由 4 个变为 1 个，清除后关闭面板恢复完整终端宽度。首次两张桌面缩略变形图未计为证据，重新用唯一 bundle id 绑定窗口后获得正常完整截图。未执行测试片段、未使用生产主机或凭据。测试副本退出，记录 `/private/tmp/axon-terminal-design-qa/verification-result.json`。
+- 最终文案修正后 Release 构建 31.26 秒，0.7.9 (45)、AppIcon-45；干净发布包严格签名、ZIP 完整性、二进制及 Info.plist 字节一致性通过。日志 `/private/tmp/axon-0.7.9-final-package.log`。
+- 沿用用户“直接更新，不用备份”的授权，已直接安装 `/Applications/Axon.app`，未创建备份。保留 Finder 自定义图标、签名要求和生产 PID 2299；工作区安装前后字节哈希一致，常规签名、版本及二进制 SHA256 通过，LaunchServices 已登记。退出并重新打开后加载新版。结果 `/private/tmp/axon-0.7.9-install-result.json`。
+- 二进制 SHA256 `49f4c82a6ac2fb8e5380b9ccf99836583b00b030c518921024cadd64b378c8df`；ZIP SHA256 `9779ff0d56d751f1d13a25c4a162600e8fa0f3589cb9ba0bba545f9c32140415`。
+
+
+## 0.7.10 日志清空、服务器指纹与配色保存（2026-10-05）
+
+- 删除主机面板的右上角关闭按钮增加 focusEffectDisabled，消除系统自动聚焦产生的蓝色小方框；原取消、Return、Esc、显式确认及可访问性仍经原生模态专项验证。
+- 日志工具栏提供清空全部记录、空列表禁用与确认范围说明。仅清空日志，不使用搜索筛选决定删除范围；新事件继续记录。保存失败回滚完整 Workspace，包括 save 的归一化改动。
+- 已知主机说明 SSH 公钥信任的用途，提供算法、SHA256 指纹、复制、指纹搜索及移除信任。指纹按解码后的 SSH key blob 计算；无效／空记录不生成假指纹。移除失败回滚，保留连接配置、凭据与当前会话。原连接时首次确认、已知公钥比对、密钥变化拒连逻辑未修改。用途依据 Termius 官方 https://docs.termius.com/getting-started/glossary#known-hosts；管理界面为 Axon 的设计。
+- 配色从长页面内联编辑改为 820×700 pt 独立 sheet，固定标题／保存区，完整 3 个基础色与 16 个 ANSI 色可滚动编辑，左侧用 12 pt 紧凑实时预览。内置方案创建副本，自定义支持更新、重命名和另存；取消不修改父草稿，校验或保存失败保留弹窗。弹窗「保存并应用」只提交配色及自定义方案库，保留未保存的其他设置草稿；更新当前会话的显示，不重新连接。删除方案有确认且失败使用红色提示。卡片选择仍遵循设置页面底部保存。
+- 41 个不同相关用例最终全部通过，0 跳过；首轮 40 项中，配色滚动测试出现外层滚动未揭示内层列表导致的 2 个 hit-test 断言失败。补充滚动揭示并检查标题完全可见后再验证真实点击，复测 14 项全部通过，20.150 秒；含后来加入的实际弹窗保存失败／取消测试。日志 `/private/tmp/axon-0.7.10-tests.log`、`/private/tmp/axon-0.7.10-final-theme-tests.log`。保存／回滚、19 色、ANSI 实际引擎查询、中文／英文／650 与1100宽度、点击和滚动均覆盖；计数去重不累加重跑项。PNG `/private/tmp/axon-0.7.10-ui/` 已检查，关闭按钮无蓝框，紧凑预览和固定页脚完整。SwiftTerm cacheDisplay 不包含部分 Core Animation 图层，不作为实际终端背景颜色证据。
+- CUA 独立 Release 副本使用临时 workspace、1 个虚构主机、2 条事件与公共测试密钥；检查日志清空和移除信任确认后均取消。先将字号改为未保存的20，再打开配色弹窗，命名「QA 自定义绿色」并保存文字 #12BC82；不点击外层保存即可在文件读取到自定义方案和原字号19。再次编辑保存背景 #252938，方案数量仍1且 ID 不变，页面预览仍20说明其他草稿未丢失。未连接远端、未访问真实凭据或操作生产日志／信任记录。测试 PID28829 已退出；记录 `/private/tmp/axon-0.7.10-qa/verification-result.json`。CUA截图返回变形的窗口缩略图，不计为视觉证据；使用原生渲染 PNG 和真实 AX／点击结果验证。
+- Release 构建65.39秒，0.7.10 (46)、AppIcon-46；干净发布包严格签名通过，ZIP完整性、二进制及 Info.plist 字节一致性通过。日志 `/private/tmp/axon-0.7.10-package.log`。
+- 按用户「直接更新，不用备份」「一切不需要我批准」的明确授权，已直接更新 `/Applications/Axon.app`，未创建应用备份。保留自定义图标和原签名要求；安装前后生产 workspace.json 字节哈希一致，原生产 PID [22055] 持续运行，会话未中断，退出后重新打开加载新版。常规签名、版本与二进制校验通过，LaunchServices已登记。结果 `/private/tmp/axon-0.7.10-install-result.json`。
+- 二进制SHA256 `682f4379206dcde5a28287f02987a13555ce4ab46e03653e15a92d27e311473f`；ZIP SHA256 `9bd4a43cee6d32260601e60a984b8e958aa44ba176da6e9a785c55552024b31f`。
+
+
+## 0.7.11 配色页单层滚动与宽度修复（2026-10-05）
+
+- 配色方案库移除内部 ScrollView 和固定300pt高度，LazyVGrid按结果数量自然展开，当前方案预览与全部卡片共用设置页外层滚动。空状态使用180pt最低高度；自定义编辑、更新、另存和立即保存方式保持。
+- PreferencesView仅在appearance页取消840pt宽度限制，内容填满可用面板，卡片使用自适应列数；其他设置页保留原阅读宽度。
+- 相关21项测试全部通过，0失败、0跳过，28.372秒，日志 `/private/tmp/axon-0.7.11-tests.log`。实际PreferencesView在650／1100／1600pt下检查只有一个页面滚动区；预览卡和卡片首行宽度匹配面板减48pt外边距，终端设置仍保留840pt上限。40个自定义方案逐段滚动到达，标题全部经过真实窗口hit-test，重复20轮重绘、筛选及1050／700pt缩放后仍能点击最后方案。配色预览、实际ANSI查询、编辑弹窗取消／保存失败／持久化测试均通过。
+- 原生布局位图 `/private/tmp/axon-0.7.11-ui/preferences-theme-full-pane-650.png`、`preferences-theme-full-pane-1100.png`、`preferences-theme-full-pane-1600.png` 已检查。宽窗口首行7张卡片铺至右边，窄窗口2列，方案库没有固定内层视口；SwiftTerm缓存位图未完整合成背景／光标图层，不据此宣称实际终端背景显示。未操作生产设置或打开额外应用副本。
+- Release构建67.78秒，版本0.7.11 (47)、AppIcon-47；干净发布包严格签名和ZIP完整性通过，二进制与Info.plist字节一致。日志 `/private/tmp/axon-0.7.11-package.log`。
+- 延续用户直接更新、不备份的授权，已安装 `/Applications/Axon.app`，保留图标、签名要求及生产PID [31761]；workspace.json安装前后哈希一致，会话保持运行，退出并重新打开后加载新版。未创建应用备份，LaunchServices已登记，结果 `/private/tmp/axon-0.7.11-install-result.json`。
+- 二进制SHA256 `0cfd0465cbad62993a8e1d1869bb72519a28d250adc07eefafaef36594d51154`；ZIP SHA256 `2ff2092eee5d83f3c6c72db8b87c181133b2002756dd4fc94e1a4db5ad0de7b3`。
+
+
+## 0.7.12 自定义配色编辑弹窗扩大（2026-10-05）
+
+- 编辑弹窗由固定820×700pt改为依据当前显示器可见范围，最大1180×840pt；宽高均预留64pt空间。宽屏预览列扩大到420pt，使用14pt预览字体；紧凑屏幕使用360／300pt列与12pt预览字体，终端实际字号保持原值。3个基础色放到预览下方，右侧专用于16个ANSI色，色位标签改为输入旁的单行显示。标题、名称与保存栏固定，正文共用一个滚动区域。
+- 最终相关21项测试全部通过，0失败、0跳过，18.853秒，日志 `/private/tmp/axon-0.7.12-final-tests.log`。普通桌面完整19色同时可见；模拟1024×700pt可见屏幕下弹窗960×636pt，仅一个正文滚动区，全部19个输入都可到达且HEX输入宽度大于80pt，滚动时保存栏位置不变。真实650×700pt设置父窗口仍打开超过1000pt的大弹窗，保持父窗口尺寸、会话ID／generation、不产生连接任务，也不修改已保存设置；取消后恢复原父窗口位置。
+- 首轮测试将“不调整父窗口大小”误写为比较完整frame，因AppKit临时移动紧凑父窗口来容纳大sheet而失败。修正为打开时比较size、取消后仍比较完整frame；生产代码未为此调整。其余保存、更新、另存、失败保留弹窗／回滚、ANSI引擎查询及配色页单层滚动测试通过。
+- 原生布局PNG `/private/tmp/axon-0.7.12-ui/preferences-theme-editor-expanded-popup.png` 与 `preferences-theme-editor-compact-screen.png` 已检查：宽屏预览、19色和固定页脚完整；小屏幕滚动后能到达最后一排。SwiftTerm的cacheDisplay未完整合成背景／光标层，黑色缓存区域不作为实际终端主题颜色证据。未操作生产设置、主机或终端会话。
+- Release构建69.54秒，版本0.7.12 (48)、AppIcon-48；干净发布包严格签名及ZIP完整性通过，二进制与Info.plist字节一致。日志 `/private/tmp/axon-0.7.12-package.log`。已有连接／转发相关Sendable和Keychain弃用警告仍存在，此次编辑器修改未新增编译警告。
+- 按用户直接更新、不备份的授权，已安装 `/Applications/Axon.app`，保留自定义图标、签名要求及生产PID [36457]；workspace.json安装前后字节哈希一致，当前应用会话保持运行，退出并重新打开后加载新版。未创建应用备份，LaunchServices已登记。结果 `/private/tmp/axon-0.7.12-install-result.json`。
+- 二进制SHA256 `415e132686e0d47b3df3fcf11fc511c4a95bb5528fad5e5c8dfe05c657088212`；ZIP SHA256 `597411880c826b43221e9b4e3377922b7c1b388b919296b62e5076ac1dc4c047`。

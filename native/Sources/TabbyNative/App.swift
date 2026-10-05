@@ -148,7 +148,7 @@ struct MainView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 workspaceBar
-                Rectangle().fill(store.section == "terminal" ? Color(hex: store.workspace.preferences.background) : Palette.border.opacity(0.6)).frame(height: 1)
+                Rectangle().fill(store.section == "terminal" ? TerminalChrome.border : Palette.border.opacity(0.6)).frame(height: 1)
                 workspaceContent(width: geometry.size.width, height: max(0, geometry.size.height - 53))
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }.foregroundStyle(Palette.text).font(.system(size: 13)).background(Palette.background)
@@ -299,7 +299,7 @@ struct MainView: View {
                     .frame(width: 28, height: 34)
             }
         }.padding(.leading, 84).padding(.trailing, 14).frame(height: 52)
-            .background(store.section == "terminal" ? Color(hex: store.workspace.preferences.background) : Palette.chrome)
+            .background(Palette.chrome)
             .focusEffectDisabled().animation(.easeInOut(duration: 0.16), value: store.section)
     }
     func updateMonitoring() {
@@ -450,9 +450,13 @@ struct MainView: View {
         }
     }
     func deleteHost(_ host: Host) {
-        let alert = NSAlert(); alert.messageText = store.text("Delete this host?", "删除此主机？"); alert.informativeText = host.name
-        alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
-        if alert.runModal() == .alertFirstButtonReturn { do { try store.deleteHost(host.id); if selectedHost == host.id { selectedHost = nil; inspectorHost = nil } } catch { store.error = error.localizedDescription } }
+        let confirmation = HostDeletionConfirmationWindowController(host: store.resolvedHost(host), chinese: store.chinese)
+        guard confirmation.present() else { return }
+        do {
+            try store.deleteHost(host.id)
+            if selectedHost == host.id { selectedHost = nil }
+            if inspectorHost?.id == host.id { inspectorHost = nil }
+        } catch { store.error = error.localizedDescription }
     }
 }
 
