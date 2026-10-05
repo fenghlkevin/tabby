@@ -53,6 +53,10 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     @Published var followDirectoryInFiles = false {
         didSet { store.objectWillChange.send() }
     }
+    var commandHistoryStore: CommandHistoryStore?
+    var commandHistoryToken = ""
+    @Published var commandHistoryReady = false
+    @Published var commandHistoryRecording = true
     var pendingDirectoryInsertion: (command: String, host: Host?)?
     @Published var connected = false {
         didSet {
@@ -69,6 +73,9 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     var terminal: TerminalView?
     var task: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
+    var commandHistoryStartupTask: Task<Void, Never>?
+    var commandHistoryBootstrapScreen = false
+    var commandHistoryBootstrapCover: NSView?
     private(set) var generation = 0
     private var localProcessGeneration: Int?
     private var columns = 100
@@ -133,6 +140,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
             env["TERM"] = "xterm-256color"
             local.startProcess(executable: launch.executable, args: launch.arguments, environment: env.map { "\($0.key)=\($0.value)" }, currentDirectory: launch.directory)
             connected = true; status = store.text("Connected", "已连接")
+            startAutomaticCommandHistory()
             if local.process.running { store.recordRecentSuccess(kind: .localTerminal) }
         } else { reconnect() }
         return view
@@ -267,7 +275,23 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
                 client = connection; status = store.text("Opening terminal…", "正在打开终端…")
                 try await connection.withPTY(.init(wantReply: true, term: "xterm-256color", terminalCharacterWidth: 100, terminalRowHeight: 30, terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { output, input in
                     guard request == generation, !Task.isCancelled else { throw CancellationError() }
-                    writer = input; connected = true; connectionInProgress = false; status = store.text("Connected", "已连接")
+                    writer = input;
+                    let bootstrap = automaticCommandHistoryScript()
+                    commandHistoryStartupTask = Task { [weak self] in
+                        try? await Task.sleep(for: .milliseconds(150))
+                        guard let self, self.generation == request, !Task.isCancelled else { return }
+                        self.beginCommandHistoryBootstrapScreen()
+                        do {
+                            for line in bootstrap.components(separatedBy: "\n") {
+                                try Task.checkCancellation()
+                                try await input.write(ByteBuffer(string: line + "\r"))
+                                try await Task.sleep(for: .milliseconds(15))
+                            }
+                            try await Task.sleep(for: .seconds(2))
+                            if self.generation == request { self.endCommandHistoryBootstrapScreen() }
+                        } catch { self.endCommandHistoryBootstrapScreen() }
+                    }
+                    connected = true; connectionInProgress = false; status = store.text("Connected", "已连接")
                     store.record("ssh", "connected", host: host.name)
                     store.recordRecentSuccess(host, kind: .ssh)
                     do {
@@ -327,7 +351,10 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         currentDirectory = nil
         authenticationWindow?.cancel()
         if connected, let host { store.record("ssh", "disconnected", host: host.name) }
+        commandHistoryToken = ""; commandHistoryReady = false
         inputTask?.cancel(); inputTask = nil
+        commandHistoryStartupTask?.cancel(); commandHistoryStartupTask = nil
+        endCommandHistoryBootstrapScreen()
         task?.cancel(); task = nil; writer = nil; connected = false; connectionInProgress = false
         if let local = terminal as? LocalProcessTerminalView { local.terminate() }
         let clients = jumpClients + (client.map { [$0] } ?? [])
@@ -340,6 +367,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) { if host == nil && !title.isEmpty { self.title = title } }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         guard source === terminal, connected else { return }
+        if receiveCommandHistory(directory) { return }
         let previous = currentDirectory
         currentDirectory = TerminalDirectoryBridge.currentDirectory(directory, trustedHosts: directoryTrustedHosts)
         guard followDirectoryInFiles, currentDirectory != previous, let currentDirectory else { return }

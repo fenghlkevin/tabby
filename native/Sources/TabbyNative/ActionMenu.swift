@@ -5,10 +5,13 @@ private struct ActionMenuHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+private struct InsideActionMenuKey: EnvironmentKey { static let defaultValue = false }
+
 private struct ActionMenuDismissKey: EnvironmentKey {
     static let defaultValue: () -> Void = {}
 }
 private extension EnvironmentValues {
+    var insideActionMenu: Bool { get { self[InsideActionMenuKey.self] } set { self[InsideActionMenuKey.self] = newValue } }
     var dismissActionMenu: () -> Void {
         get { self[ActionMenuDismissKey.self] }
         set { self[ActionMenuDismissKey.self] = newValue }
@@ -17,6 +20,10 @@ private extension EnvironmentValues {
 
 /// Shared anchored menus use readable rows and let AppKit keep the popover inside the window.
 struct AppActionMenu<Content: View, Label: View>: View {
+    @Environment(\.insideActionMenu) private var insideMenu
+    @Environment(\.dismissActionMenu) private var dismissParent
+    @State private var hoverTask: Task<Void, Never>?
+    @State private var hovering = false
     @State private var presented = false
     @State private var contentHeight: CGFloat = 180
     private let content: Content
@@ -27,11 +34,21 @@ struct AppActionMenu<Content: View, Label: View>: View {
     var body: some View {
         Button { presented.toggle() } label: { label.contentShape(Rectangle()) }
             .buttonStyle(.plain)
-            .popover(isPresented: $presented, arrowEdge: .bottom) {
+            .background(insideMenu && hovering ? Palette.selected : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .onHover { hovering in
+                guard insideMenu else { return }
+                self.hovering = hovering
+                hoverTask?.cancel()
+                if hovering { hoverTask = Task { try? await Task.sleep(for: .milliseconds(150)); if !Task.isCancelled { presented = true } } }
+            }
+            .onDisappear { hoverTask?.cancel() }
+            .popover(isPresented: $presented, arrowEdge: insideMenu ? .leading : .bottom) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) { content }
                         .buttonStyle(ActionMenuRowStyle())
-                        .environment(\.dismissActionMenu, { presented = false })
+                        .environment(\.dismissActionMenu, { presented = false; if insideMenu { dismissParent() } })
+                        .environment(\.insideActionMenu, true)
                         .padding(8)
                         .background(GeometryReader { geometry in Color.clear.preference(key: ActionMenuHeightKey.self, value: geometry.size.height) })
                 }.scrollIndicators(.hidden).frame(width: 240, height: min(400, max(44, contentHeight)))
@@ -82,6 +99,7 @@ private struct AppContextMenuModifier<MenuContent: View>: ViewModifier {
                         VStack(alignment: .leading, spacing: 4) { menu }
                             .buttonStyle(ActionMenuRowStyle())
                             .environment(\.dismissActionMenu, { presented = false })
+                            .environment(\.insideActionMenu, true)
                             .padding(8)
                             .background(GeometryReader { geometry in Color.clear.preference(key: ActionMenuHeightKey.self, value: geometry.size.height) })
                     }.scrollIndicators(.hidden).frame(width: 240, height: min(400, max(44, contentHeight)))

@@ -82,6 +82,7 @@ struct TerminalToolsPanel: View {
                 tab("productivity", icon: "paperplane", title: store.text("Session tools", "会话工具"), caption: store.text("Tools", "会话"))
                 tab("status", icon: "waveform.path.ecg", title: store.text("Status", "状态"), caption: store.text("Status", "状态"))
                 tab("snippets", icon: "curlybraces", title: store.text("Snippets", "代码片段"), caption: store.text("Snippets", "片段"))
+                tab("history", icon: "clock.arrow.circlepath", title: store.text("Command history", "命令历史"), caption: store.text("History", "历史"))
                 tab("theme", icon: "paintpalette", title: store.text("Terminal settings", "终端设置"), caption: store.text("Style", "外观"))
             }.padding(4).background(TerminalChrome.field).clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(TerminalChrome.border.opacity(0.45), lineWidth: 1))
@@ -96,6 +97,8 @@ struct TerminalToolsPanel: View {
 
     @ViewBuilder private var content: some View {
         switch selection {
+        case "history":
+            CommandHistoryPanel()
         case "snippets":
             SnippetTerminalPanel(sessionID: store.activeSession, scrollsInternally: false)
         case "status":

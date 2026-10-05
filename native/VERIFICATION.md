@@ -620,3 +620,35 @@
 
 - 标签管理右上关闭按钮增加focusEffectDisabled，移除蓝色键盘焦点框；保留点击关闭并增加Escape取消快捷键。低影响样式修改未新增测试。
 - Release0.8.19 (68)编译、严格签名和ZIP核心一致性通过，日志 `/private/tmp/axon-0.8.19-package.log`。已安装 `/Applications/Axon.app`，配置哈希及当前连接保留，记录 `/private/tmp/axon-0.8.19-install-result.json`；重新打开加载新版，未截图验证。
+
+
+## 0.8.20 命令历史（2026-10-05）
+
+- 终端工具增加「历史」页：当前主机／所有主机、全文搜索、复制、仅填入（不发送回车）、分页加载、暂停和清空确认。当前会话用户在Shell提示符确认配置脚本后启用Bash/Zsh钩子，不修改profile文件。
+- Zsh preexec读取实际执行命令；Bash在PROMPT_COMMAND从当前history条目读取，保留已有prompt命令并按历史编号去重（关闭history／ignore规则会影响记录），Bash时间为命令返回提示符时。Shell报告复用OSC7的专用axon-command命名空间和每会话nonce，断线后失效；不采集键盘输入与交互密码，明显凭据参数／变量过滤。
+- 历史独立本机command-history.json，最多1000条，UTF8命令最大8192字节，原子保存与0600文件权限，跨场景窗口共享，不写入workspace配置；读写错误可见。敏感命令无法完整自动识别，用户可先暂停。
+- 真实Bash/Zsh、协议nonce／大小／多行、过滤、持久化／权限、暂停及断线测试通过。初轮Bash HISTCMD在函数内不递增，改读history1编号；实际SwiftTerm报告测试订阅Published多次导致重复fulfill，测试改prefix1后通过。
+- 相关15项回归通过49.013秒（包括旧实时终端布局42秒）；补充实际SwiftTerm报告与五工具页布局7项通过6.776秒，日志 `/private/tmp/axon-0.8.20-tests.log`、`/private/tmp/axon-0.8.20-final-tests.log`。搜索框暗色对比修复后五工具布局再次通过，日志 `/private/tmp/axon-0.8.20-layout-final.log`。截图 `/private/tmp/axon-command-history-ui/tools-history.png` 已检查。真实远程SSH服务器未验证。
+- 最终Release0.8.20 (69)、严格签名与ZIP核心一致性通过，已安装 `/Applications/Axon.app`，配置哈希及当前连接保留，记录 `/private/tmp/axon-0.8.20-install-result.json`。重新打开应用加载新版后按历史页说明启用当前Shell。
+
+## 0.8.21 / build 70 — automatic operation history and submenu navigation
+
+- Shared AppActionMenu nested menus open after 150 ms hover, highlight the parent row and use a horizontal popover edge; selecting a nested action dismisses both menu levels. Native NSMenu submenus keep AppKit hover navigation. This change has not been manually verified with pointer interaction in the installed app.
+- New local and SSH Bash/Zsh sessions automatically install session-only command hooks. Removed the manual Shell-configuration insertion workflow. Initialization is split into short statements and paced to avoid macOS PTY input-queue truncation; cancellation/disconnect stops local initialization.
+- Logs defaults to Operation history: server cards open chronological command records with time, search, copy and insert without Return. Existing connection events remain available in a separate segment. The shared local history store works across scene windows, retains at most 1,000 entries and uses 0600 permissions.
+- Eight focused tests passed (seven CommandHistoryTests plus ContextClickTests), including a real local Bash PTY launched via TerminalSession.makeView(), automatic handshake and recorded command without manual setup, real Bash/Zsh hooks, nonce validation, pause/stale reports, persistence and credential filtering. Log: /private/tmp/axon-0.8.21-final-tests.log.
+- Scope: Bash uses enabled shell history and reports after returning to the prompt; Zsh reports at execution start. Interactive password prompts and TUI keystrokes are not command records. SSH startup wiring compiles but was not exercised against a live server in this verification.
+- Release package and ZIP signature/content checks passed. Installed /Applications/Axon.app as 0.8.21 (70), backed up old application to /private/tmp/Axon-before-0.8.21.app. Installation did not quit or relaunch any running application and did not write user configuration. Default workspace.json was absent on this host; its absence was preserved. Install evidence: /private/tmp/axon-0.8.21-install-result.json.
+
+## 0.8.22 / build 71 — hide command-history initialization
+
+- Run bootstrap echo in a temporary alternate terminal buffer with the terminal view hidden during initialization, then restore the normal buffer and visibility on the authenticated ready report. Login output already in the normal buffer is preserved; the script does not remain in normal scrollback. Unsupported-shell reports, disconnection, initialization failure and a two-second fallback restore visibility.
+- SSH output consumption starts before paced bootstrap delivery so login output can render before the isolated initialization phase. Local initialization checks session generation and cancellation before hiding the view.
+- Seven command-history tests passed. The real Bash PTY startup test asserts normal-buffer login banner and executed command remain visible, bootstrap function definitions are absent, terminal alpha returns to 1, and automatic command capture works. Bash/Zsh protocol hook tests also pass. Evidence: /private/tmp/axon-0.8.22-tests.log. No live SSH server was used for this verification.
+- Signed release and ZIP checks passed; installed /Applications/Axon.app 0.8.22 (71), old app backup /private/tmp/Axon-before-0.8.22.app. No running application was quit/relaunched and no user configuration was modified. Evidence: /private/tmp/axon-0.8.22-install-result.json.
+
+## 0.8.23 / build 72 — stable terminal startup surface
+
+- Removed the bootstrap alphaValue 0→1 transition. A non-interactive NSImageView holds a bitmap of the current normal terminal surface over the initialization buffer, preserving the terminal view opacity and dimensions. Restoring the normal buffer retains this cover for one render interval before removing it. Local and SSH bootstrap share this behavior.
+- Eight CommandHistoryTests passed. Added a real TerminalView test that verifies the cover contains a captured image, does not intercept pointer input, terminal visibility/alpha remain unchanged, the normal login text survives and initialization output does not enter the normal buffer. Existing actual local Bash PTY automatic recording plus Bash/Zsh hook tests pass. Evidence: /private/tmp/axon-0.8.23-tests.log. No live remote SSH or manual pointer/video verification was performed for this change.
+- Release and ZIP verification passed. Installed /Applications/Axon.app 0.8.23 (72); backup /private/tmp/Axon-before-0.8.23.app. Current app process/connections preserved, user configuration untouched. Install evidence: /private/tmp/axon-0.8.23-install-result.json.

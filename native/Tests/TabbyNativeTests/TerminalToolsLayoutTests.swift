@@ -5,7 +5,7 @@ import XCTest
 @testable import TabbyNative
 
 @MainActor final class TerminalToolsLayoutTests: XCTestCase {
-    func testSwitchingAllFourToolsKeepsFullHeightWidthAndHeaderPositions() async throws {
+    func testSwitchingAllFiveToolsKeepsFullHeightWidthAndHeaderPositions() async throws {
         _ = NSApplication.shared
         let restore = enableAccessibility(); defer { restore() }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("axon-tools-layout-" + UUID().uuidString)
@@ -21,7 +21,7 @@ import XCTest
             window.setContentSize(size); try await settle(hosting)
             var original: NSRect?
             var headerFrames: [String: NSRect] = [:]
-            for tool in ["theme", "status", "snippets", "productivity", "theme"] {
+            for tool in ["theme", "status", "snippets", "history", "productivity", "theme"] {
                 let tab = try button(tool, in: hosting)
                 tab.performClick(nil); try await settle(hosting)
                 if size.height == 900 { try diagnose(hosting, name: tool) }

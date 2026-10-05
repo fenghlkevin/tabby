@@ -97,6 +97,20 @@ struct ForwardRuleEditor: View {
 
 struct LogsView: View {
     @EnvironmentObject var store: AppStore
+    @State private var selected = "operations"
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker(store.text("Log type", "日志类型"), selection: $selected) {
+                Text(store.text("Operation history", "操作历史")).tag("operations")
+                Text(store.text("Connection events", "连接事件")).tag("connections")
+            }.pickerStyle(.segmented).frame(width: 300).padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Palette.sidebar)
+            if selected == "operations" { OperationHistoryView() } else { ConnectionEventsView() }
+        }
+    }
+}
+
+struct ConnectionEventsView: View {
+    @EnvironmentObject var store: AppStore
     @State private var search = ""
     @State private var confirmingClear = false
     var body: some View {

@@ -392,3 +392,5 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
 This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind are welcome!
 
 场景窗口使用最外层终端、SFTP、日志标签，顶栏「保存场景」保存当前终端与分屏、已打开目录和日志。
+
+操作历史：新开本地或 SSH 的 Bash/Zsh 终端后自动启用当前会话记录，无需手动填写 Shell 配置。在「日志 → 操作历史」按服务器查看命令、时间，支持搜索、复制及仅填入复用。本机最多保留1000条，可暂停／清空，不修改Shell配置文件。Bash依赖Shell历史，关闭历史或忽略的命令不会记录，记录时间为返回提示符时；Zsh记录执行开始时间。交互密码输入不采集，明显凭据命令过滤，其他敏感内容可先暂停记录。
