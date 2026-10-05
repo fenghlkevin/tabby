@@ -3,12 +3,13 @@ import AppKit
 
 struct ChromeButtonStyle: ButtonStyle {
     var prominent = false
+    var accentColor: Color? = nil
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 12, weight: .semibold))
             .foregroundStyle(prominent ? Palette.background : Palette.text)
             .padding(.horizontal, 14).frame(height: 34)
-            .background(prominent ? Palette.accent : Palette.field)
+            .background(prominent ? (accentColor ?? Palette.accent) : Palette.field)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.7 : 1)
     }
@@ -16,7 +17,7 @@ struct ChromeButtonStyle: ButtonStyle {
 struct IconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 14)).foregroundStyle(Palette.muted)
-            .frame(width: 28, height: 28)
+            .frame(width: 28, height: 28).contentShape(Rectangle())
             .background(configuration.isPressed ? Palette.selected : .clear)
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
@@ -161,7 +162,7 @@ struct HostCard: View {
     var icon: String { host.tags.localizedCaseInsensitiveContains("database") || host.tags.localizedCaseInsensitiveContains("db") ? "externaldrive.fill" : "server.rack" }
     var subtitle: String {
         var seen = Set<String>()
-        let details = (["ssh", RecentTargets.effectiveUsername(host, workspace: store.workspace)] + TagTokens.parse(host.tags)).filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.joined(separator: ", ")
+        let details = ["ssh", RecentTargets.effectiveUsername(host, workspace: store.workspace)].filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.joined(separator: ", ")
         return showGroup && !host.group.isEmpty ? details + " · " + host.group : details
     }
     var tileColor: Color { icon == "externaldrive.fill" ? Color(hex: "#7758AC") : Palette.orange }
@@ -172,8 +173,15 @@ struct HostCard: View {
                     IconTile(symbol: icon, color: tileColor)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(host.name.isEmpty ? host.address : host.name).font(.system(size: 14)).foregroundStyle(Palette.text).lineLimit(1)
-                        Text(subtitle)
-                            .font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(subtitle).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1)
+                            ForEach(TagTokens.parse(host.tags).prefix(2), id: \.self) { tag in
+                                Text(tag).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                                    .foregroundStyle(Color(hex: "#7657C8")).padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Color(hex: "#7657C8").opacity(0.12)).clipShape(Capsule())
+                            }
+                            if TagTokens.parse(host.tags).count > 2 { Text("+\(TagTokens.parse(host.tags).count - 2)").font(.system(size: 10)).foregroundStyle(Color(hex: "#7657C8")) }
+                        }.help(TagTokens.parse(host.tags).joined(separator: ", "))
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     if !compact { Text(host.address).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1).frame(width: 180, alignment: .leading) }
                 }.frame(maxWidth: .infinity, minHeight: 60, maxHeight: 60).contentShape(Rectangle())
@@ -191,7 +199,19 @@ struct HostCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Palette.accent : .clear, lineWidth: 1.5))
             .onHover { hovering = $0 }
-            .contextMenu { Button(store.text("Connect", "连接"), action: connect); Button(store.text("Edit", "编辑"), action: edit); if let monitor { Button(store.text("View status", "查看状态"), action: monitor) }; Button(store.text("Duplicate", "复制主机")) { do { try store.duplicateHost(host) } catch { store.error = error.localizedDescription } }; Menu(store.text("Move to group", "移到分组")) { Button(store.text("Ungrouped", "未分组")) { store.moveHost(host.id, to: "") }; ForEach(store.groups, id: \.self) { group in Button(group) { store.moveHost(host.id, to: group) } } }; Button(store.text("Delete", "删除"), role: .destructive, action: delete) }
+            .appContextMenu {
+                Button(action: connect) { Label(store.text("Connect", "连接"), systemImage: "terminal") }
+                Button(action: edit) { Label(store.text("Edit", "编辑"), systemImage: "square.and.pencil") }
+                if let monitor { Button(action: monitor) { Label(store.text("View status", "查看状态"), systemImage: "waveform.path.ecg") } }
+                Divider()
+                Button { do { try store.duplicateHost(host) } catch { store.error = error.localizedDescription } } label: { Label(store.text("Duplicate", "复制主机"), systemImage: "plus.square.on.square") }
+                AppActionMenu {
+                    Button(store.text("Ungrouped", "未分组")) { store.moveHost(host.id, to: "") }
+                    ForEach(store.groups, id: \.self) { group in Button(group) { store.moveHost(host.id, to: group) } }
+                } label: { HStack { Label(store.text("Move to group", "移到分组"), systemImage: "folder"); Spacer(); Image(systemName: "chevron.right") }.padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 34) }
+                Divider()
+                Button(role: .destructive, action: delete) { Label(store.text("Delete", "删除"), systemImage: "trash") }
+            }
     }
 }
 
@@ -221,6 +241,7 @@ struct WindowSurface: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
+            window.isMovableByWindowBackground = false
             window.backgroundColor = NSColor(hex: Palette.surfaceHex)
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
@@ -276,7 +297,7 @@ struct KnownHostsView: View {
             }.padding(22)
             }
         }.background(Palette.background)
-            .alert(store.text("Remove server trust?", "移除服务器信任？"), isPresented: Binding(
+            .appAlert(store.text("Remove server trust?", "移除服务器信任？"), isPresented: Binding(
                 get: { removalEndpoint != nil }, set: { if !$0 { removalEndpoint = nil } }), presenting: removalEndpoint) { endpoint in
                 Button(store.text("Cancel", "取消"), role: .cancel) { removalEndpoint = nil }
                 Button(store.text("Remove trust", "移除信任"), role: .destructive) {
@@ -336,4 +357,17 @@ struct WindowDragHandle: NSViewRepresentable {
     }
     func makeNSView(context: Context) -> NSView { DragView() }
     func updateNSView(_ view: NSView, context: Context) {}
+}
+
+/// Host picker rows keep their surface stable while being clicked.
+struct StableHostPickerButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
+}
+
+struct FileToolbarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.padding(.horizontal, 4).frame(height: 32).contentShape(Rectangle())
+            .background(configuration.isPressed ? Palette.selected : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
 }

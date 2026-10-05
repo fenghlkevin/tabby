@@ -15,6 +15,25 @@ protocol FileEndpoint: Sendable {
     func chmod(_ path: String, _ mode: UInt32) async throws
     func read(_ path: String, offset: UInt64, count: Int) async throws -> Data
     func write(_ path: String, offset: UInt64, bytes: Data) async throws
+    func isAvailable() async -> Bool
+    func removeStagingFile(_ entry: FileEntry) async throws
+}
+
+extension FileEndpoint {
+    func isAvailable() async -> Bool { true }
+    func removeStagingFile(_ entry: FileEntry) async throws {
+        try FileStaging.validate(entry)
+        try await delete(entry)
+    }
+}
+
+enum FileStaging {
+    static func validate(_ entry: FileEntry) throws {
+        guard !entry.directory, [".tabby-", ".backup-"].contains(where: { marker in
+            guard let range = entry.name.range(of: marker, options: .backwards) else { return false }
+            return UUID(uuidString: String(entry.name[range.upperBound...])) != nil
+        }) else { throw AppFailure.message("Only application staging files may be removed directly") }
+    }
 }
 
 actor LocalFiles: FileEndpoint {
@@ -23,6 +42,10 @@ actor LocalFiles: FileEndpoint {
     func mkdir(_ path: String) throws { try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false) }
     func rename(_ from: String, _ to: String) throws { try FileManager.default.moveItem(atPath: from, toPath: to) }
     func delete(_ entry: FileEntry) throws { try FileManager.default.trashItem(at: URL(fileURLWithPath: entry.path), resultingItemURL: nil) }
+    func removeStagingFile(_ entry: FileEntry) throws {
+        try FileStaging.validate(entry)
+        try FileManager.default.removeItem(atPath: entry.path)
+    }
     func chmod(_ path: String, _ mode: UInt32) throws { try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: path) }
     func read(_ path: String, offset: UInt64, count: Int) throws -> Data {
         let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path)); defer { try? handle.close() }
@@ -40,6 +63,8 @@ actor LocalFiles: FileEndpoint {
 actor RemoteFiles: FileEndpoint {
     let sftp: SFTPClient
     init(_ sftp: SFTPClient) { self.sftp = sftp }
+    func isAvailable() -> Bool { sftp.isActive }
+    func close() async throws { try await sftp.close() }
     func entry(_ path: String, _ attr: SFTPFileAttributes) -> FileEntry {
         let mode = attr.permissions ?? 0
         return FileEntry(name: (path as NSString).lastPathComponent, path: path, directory: mode & 0o170000 == 0o040000, symlink: mode & 0o170000 == 0o120000, size: attr.size ?? 0, permissions: mode & 0o7777, modified: attr.accessModificationTime?.modificationTime ?? .distantPast)
@@ -86,6 +111,8 @@ actor RemoteFiles: FileEndpoint {
     @Published var showHidden = false { didSet { pruneSelection() } }
     @Published var loading = false
     @Published var busy = false
+    /// Read-only tools retain the endpoint while the browser switches hosts.
+    var readerCount = 0
     @Published var error: String? { didSet { errorID = UUID() } }
     @Published private(set) var errorID = UUID()
     @Published var sort = "name"
@@ -150,8 +177,10 @@ actor RemoteFiles: FileEndpoint {
     @Published var retryAvailable = true
     var retryReason = ""
     var cancelled = false
-    init(entry: FileEntry, destination: String, source: any FileEndpoint, target: any FileEndpoint, direction: String) {
+    let expectation: DirectoryTransferExpectation?
+    init(entry: FileEntry, destination: String, source: any FileEndpoint, target: any FileEndpoint, direction: String, expectation: DirectoryTransferExpectation? = nil) {
         self.entry = entry; self.destination = destination; self.source = source; self.target = target; self.direction = direction
+        self.expectation = expectation
     }
 }
 
@@ -163,9 +192,9 @@ actor RemoteFiles: FileEndpoint {
     func collapsePanel() { panelExpanded = false }
     func expandPanel() { if !jobs.isEmpty { panelExpanded = true } }
     func clearFinished() { jobs.removeAll { $0.state == "completed" || $0.state == "cancelled" } }
-    func enqueue(_ entry: FileEntry, destination: String, source: any FileEndpoint, target: any FileEndpoint, direction: String) throws {
+    func enqueue(_ entry: FileEntry, destination: String, source: any FileEndpoint, target: any FileEndpoint, direction: String, expectation: DirectoryTransferExpectation? = nil) throws {
         try validateLocalTransfer(entry, to: destination, source: source, target: target)
-        jobs.append(TransferJob(entry: entry, destination: destination, source: source, target: target, direction: direction)); panelExpanded = true; run()
+        jobs.append(TransferJob(entry: entry, destination: destination, source: source, target: target, direction: direction, expectation: expectation)); panelExpanded = true; run()
     }
     func retry(_ job: TransferJob) { guard job.retryAvailable else { job.error = job.retryReason; return }; job.cancelled = false; job.completed = 0; job.total = 0; job.error = ""; job.state = "queued"; panelExpanded = true; run() }
     func cancel(_ job: TransferJob) { job.cancelled = true; if job.state == "queued" { job.state = "cancelled" } }
@@ -186,18 +215,27 @@ actor RemoteFiles: FileEndpoint {
         try check(job)
         try validateLocalTransfer(entry, to: destination, source: job.source, target: job.target)
         guard !entry.symlink else { throw AppFailure.message("Symbolic links are not followed during transfers: \(entry.name)") }
+        if let expectation = job.expectation {
+            try await expectation.prepare(source: job.source, target: job.target, destination: destination, check: { try self.check(job) })
+            try check(job)
+        }
         let existing = try await fileIfExists(destination, backend: job.target)
         if entry.directory {
             if let existing { guard existing.directory && !existing.symlink else { throw AppFailure.message("Destination is a file: \(destination)") } }
             else { try await job.target.mkdir(destination) }
-            for child in try await job.source.list(entry.path) { try await transfer(child, to: remoteJoin(destination, child.name), job: job) }
+            // A comparison approves a fixed list, never a new recursive enumeration.
+            if job.expectation == nil {
+                for child in try await job.source.list(entry.path) { try await transfer(child, to: remoteJoin(destination, child.name), job: job) }
+            }
             return
         }
         if let existing {
             guard !existing.directory && !existing.symlink else { throw AppFailure.message("Cannot overwrite directory or symbolic link: \(destination)") }
-            let alert = NSAlert(); alert.messageText = "Replace \(entry.name)?"; alert.informativeText = destination
-            alert.addButton(withTitle: "Replace"); alert.addButton(withTitle: "Skip"); alert.addButton(withTitle: "Cancel transfer")
-            switch alert.runModal() { case .alertSecondButtonReturn: return; case .alertThirdButtonReturn: job.cancelled = true; throw CancellationError(); default: break }
+            if job.expectation == nil {
+                let alert = AppModalAlert(); alert.messageText = "Replace \(entry.name)?"; alert.informativeText = destination
+                alert.addButton(withTitle: "Replace"); alert.addButton(withTitle: "Skip"); alert.addButton(withTitle: "Cancel transfer")
+                switch alert.runModal() { case .alertSecondButtonReturn: return; case .alertThirdButtonReturn: job.cancelled = true; throw CancellationError(); default: break }
+            }
         }
         job.total += entry.size
         let temp = destination + ".tabby-" + UUID().uuidString
@@ -217,12 +255,20 @@ actor RemoteFiles: FileEndpoint {
             }
             try check(job)
             try await job.target.chmod(temp, entry.permissions & 0o777)
+            if let expectation = job.expectation {
+                try await expectation.validateCopiedFile(temp, source: job.source, target: job.target, check: { try self.check(job) })
+                try await expectation.validateTarget(destination, backend: job.target, check: { try self.check(job) })
+                try check(job)
+            }
             if existing != nil { try await job.target.rename(destination, backup); backedUp = true }
             do { try await job.target.rename(temp, destination) }
             catch { if backedUp { try? await job.target.rename(backup, destination) }; throw error }
-            if backedUp, let old = try? await job.target.stat(backup) { try await job.target.delete(old) }
+            if backedUp, let old = try? await job.target.stat(backup) {
+                do { try await job.target.removeStagingFile(old) }
+                catch { job.error = "File committed; recovery backup retained at \(backup): \(error.localizedDescription)" }
+            }
         } catch {
-            if let partial = try? await job.target.stat(temp) { try? await job.target.delete(partial) }
+            if let partial = try? await job.target.stat(temp) { try? await job.target.removeStagingFile(partial) }
             throw error
         }
     }
@@ -270,6 +316,9 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
     private var generation = 0
     private var opening = false
     private var handledRecentFileRequest: UUID?
+    private var initializedSceneLocations = false
+    private var initialSceneLocalDirectory: String?
+    private var initialSceneRemoteDirectory: WorkSceneLocation?
     var endpointGeneration: Int { generation }
     var canTransfer: Bool { remote != nil && !showingHostPicker }
     var canSwitchRight: Bool { remote?.busy != true }
@@ -293,7 +342,7 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
             queue.jobs.filter { $0.state == "running" || $0.state == "queued" }.forEach { queue.cancel($0) }
             await queue.runner?.value
             if let lease {
-                while lease.pane.busy { try? await Task.sleep(for: .milliseconds(20)) }
+                while lease.pane.busy || lease.pane.readerCount > 0 { try? await Task.sleep(for: .milliseconds(20)) }
                 await lease.release()
             }
         }
@@ -308,10 +357,22 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
     func dismissHostPicker() { if remote != nil { showingHostPicker = false; status = "" } }
 
     func open() async {
-        await local.navigate(local.path, record: false)
+        prepareInitialSceneLocations()
+        if session.store.terminalFileRequest?.sessionID == session.id {
+            initialSceneLocalDirectory = nil; initialSceneRemoteDirectory = nil
+        }
+        if let initial = initialSceneLocalDirectory, local.path != NSHomeDirectory(), local.path != initial {
+            initialSceneLocalDirectory = nil
+        }
+        let localDirectory = initialSceneLocalDirectory ?? local.path
+        if await local.navigate(localDirectory, record: false), local.path == initialSceneLocalDirectory {
+            initialSceneLocalDirectory = nil
+        }
+        if await openTerminalRequestIfNeeded() { return }
         if await openRecentRequestIfNeeded() { return }
         // Refreshing, or a terminal reconnect, preserves the chosen right endpoint.
         if let remote {
+            initialSceneRemoteDirectory = nil
             if !rightIsLocal, let lease, !lease.isActive() {
                 guard !showingHostPicker, !opening, let host = rightHost else { return }
                 await selectHost(host, directory: remote.path)
@@ -323,7 +384,66 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
             status = session.status
             return // The existing terminal is still connecting.
         }
-        await selectHost(host)
+        let initialDirectory = initialSceneRemoteDirectory.flatMap { $0.hostID == host.id ? $0.path : nil }
+        await selectHost(host, directory: initialDirectory)
+        if remote != nil { initialSceneRemoteDirectory = nil }
+    }
+    private func prepareInitialSceneLocations() {
+        guard !initializedSceneLocations else { return }; initializedSceneLocations = true
+        let store = session.store
+        guard store.terminalFileRequest?.sessionID != session.id,
+              let scene = store.openScenes.first(where: { $0.sessionIDs.contains(session.id) }) else { return }
+        if local.path == NSHomeDirectory(), local.entries.isEmpty, local.history.isEmpty {
+            initialSceneLocalDirectory = scene.definition.directories.first { $0.hostID == nil }?.path
+        }
+        if let hostID = session.host?.id {
+            initialSceneRemoteDirectory = scene.definition.directories.first { $0.hostID == hostID }
+        }
+    }
+    @discardableResult func openTerminalRequestIfNeeded() async -> Bool {
+        let store = session.store
+        guard store.section == "sftp" || (store.section == "scene" && store.currentScene?.mode == "files"),
+              let request = store.terminalFileRequest,
+              request.sessionID == session.id, request.id != store.handledTerminalFileRequestID else { return false }
+        store.handledTerminalFileRequestID = request.id
+        guard canSwitchRight else {
+            remote?.error = store.text("Finish the current file operation first.", "请先完成当前文件操作。"); return true
+        }
+        guard let sourceSession = store.sessions.first(where: { $0.id == request.sessionID }), sourceSession.connected,
+              sourceSession.generation == request.generation else {
+            local.error = store.text("The terminal has disconnected.", "终端已断开。"); return true
+        }
+        let pane: FilePane
+        var expectedGeneration = generation
+        if let host = request.host {
+            guard sourceSession.matchesEndpoint(host) else { local.error = store.text("The terminal connection changed.", "终端连接已改变。"); return true }
+            if rightIsLocal || remote == nil || lease?.isActive() != true || !matchesRightConnection(host) {
+                expectedGeneration += 1
+                await selectHost(host)
+            }
+            guard generation == expectedGeneration, !rightIsLocal, !showingHostPicker, lease?.isActive() == true,
+                  matchesRightConnection(host), rightAuthenticatedUsername == (sourceSession.authenticatedUsername ?? RecentTargets.effectiveUsername(host, workspace: store.workspace)),
+                  let remote else {
+                status = store.text("The file connection changed. Open the directory again.", "文件连接已改变，请重新打开目录。"); return true
+            }
+            pane = remote
+        } else {
+            guard sourceSession.host == nil else { local.error = store.text("The terminal connection changed.", "终端连接已改变。"); return true }
+            pane = local
+        }
+        guard sourceSession.generation == request.generation, sourceSession.connected else { pane.error = store.text("The terminal connection changed.", "终端连接已改变。"); return true }
+        do {
+            if request.isSelection {
+                let entry = try await pane.backend.stat(request.path)
+                guard generation == expectedGeneration, sourceSession.generation == request.generation else { throw AppFailure.message(store.text("The connection changed.", "连接已改变。")) }
+                if entry.directory && !entry.symlink { _ = await pane.navigate(entry.path) }
+                else {
+                    let parent = (entry.path as NSString).deletingLastPathComponent
+                    if await pane.navigate(parent.isEmpty ? "/" : parent) { pane.selected = [entry.path] }
+                }
+            } else { _ = await pane.navigate(request.path) }
+        } catch { pane.error = error.localizedDescription }
+        return true
     }
     func selectLocal(path: String = NSHomeDirectory()) async {
         guard canSwitchRight else { return }
@@ -343,6 +463,10 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
         let profileSnapshot = session.store.resolvedHost(host)
         let secretSourceID = session.store.groupSecretID(for: host)
         let routeSnapshot = MonitoringCenter.savedRoute(for: host, workspace: session.store.workspace)
+        if rightHost?.id == host.id, !rightIsLocal, remote != nil, directory == nil, lease?.isActive() == true,
+           rightConnectionSnapshot == profileSnapshot, rightSecretSourceID == secretSourceID, rightRouteSnapshot == routeSnapshot {
+            showingHostPicker = false; status = ""; return
+        }
         generation += 1; let request = generation
         let username = RecentTargets.effectiveUsername(host, workspace: session.store.workspace)
         retireCurrentLease()
@@ -461,7 +585,7 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
         }
         let pending = queue.runner
         // Existing jobs retain their exact source/target endpoints across a switch.
-        Task { await pending?.value; while lease.pane.busy { try? await Task.sleep(for: .milliseconds(20)) }; await lease.release() }
+        Task { await pending?.value; while lease.pane.busy || lease.pane.readerCount > 0 { try? await Task.sleep(for: .milliseconds(20)) }; await lease.release() }
     }
     func close() {
         generation += 1

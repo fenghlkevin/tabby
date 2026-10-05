@@ -112,4 +112,55 @@ final class MonitoringIntegrationTests: XCTestCase {
         XCTAssertFalse(actualSample.isSupported)
         XCTAssertTrue(client.isConnected)
     }
+
+    @MainActor func testSceneTerminalStatusCollectsAndPausesAcrossFilesMode() async throws {
+        guard let infoPath = ProcessInfo.processInfo.environment["TABBY_TEST_SERVER"],
+              ProcessInfo.processInfo.environment["TABBY_TEST_MONITOR_SAMPLE"] != nil else {
+            throw XCTSkip("Loopback monitoring fixture required")
+        }
+        _ = NSApplication.shared
+        let info = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: infoPath))) as! [String: Any]
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AppStore(fileURL: root.appendingPathComponent("workspace.json"))
+        var host = TabbyNative.Host(); host.name = "Scene monitoring fixture"; host.address = "127.0.0.1"
+        host.port = info["port"] as! Int; host.username = "test"; host.auth = "key"; host.keyPath = info["clientKey"] as! String
+        store.workspace.hosts = [host]
+        store.workspace.trustedKeys["127.0.0.1:\(host.port)"] = info["hostKey"] as? String
+        let scene = try store.openScene(WorkScene(name: "Monitoring", terminals: [WorkSceneTerminal(hostID: host.id)]))
+        defer { store.monitoring.stop(); store.closeScene(scene.id) }
+        let session = try XCTUnwrap(store.sessions.first { scene.sessionIDs.contains($0.id) })
+        for _ in 0..<200 {
+            if session.connected || session.task == nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(session.connected, session.status)
+        let client = try XCTUnwrap(session.client), terminal = try XCTUnwrap(session.terminal)
+        XCTAssertEqual(store.section, "scene"); XCTAssertEqual(scene.mode, "terminal")
+        store.monitoring.configure(store: store, terminalStatusVisible: true, foreground: true)
+        let id = try XCTUnwrap(store.monitoring.targetID(for: session))
+        for _ in 0..<200 {
+            if store.monitoring.snapshots[id] != nil { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let initial = try XCTUnwrap(store.monitoring.snapshots[id])
+        XCTAssertTrue(initial.isSupported); XCTAssertNotNil(initial.memory)
+        store.showFileSection()
+        store.monitoring.configure(store: store, terminalStatusVisible: true, foreground: true)
+        XCTAssertEqual(store.section, "scene"); XCTAssertEqual(scene.mode, "files")
+        XCTAssertEqual(store.monitoring.states[id], .paused)
+        store.showTerminalSection()
+        store.monitoring.configure(store: store, terminalStatusVisible: true, foreground: true)
+        for _ in 0..<200 {
+            if store.monitoring.snapshots[id].map({ $0.timestamp > initial.timestamp }) == true { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let resumed = try XCTUnwrap(store.monitoring.snapshots[id])
+        XCTAssertGreaterThan(resumed.timestamp, initial.timestamp)
+        XCTAssertTrue(session.connected); XCTAssertTrue(session.client === client); XCTAssertTrue(session.terminal === terminal)
+        let proof = try await client.executeCommand("printf SCENE_MONITOR_PARENT_OK")
+        XCTAssertEqual(String(buffer: proof), "SCENE_MONITOR_PARENT_OK")
+        store.monitoring.configure(store: store, terminalStatusVisible: false, foreground: true)
+        XCTAssertEqual(store.monitoring.states[id], .paused, "Closing the status tools must stop sampling while keeping the scene connected")
+    }
 }

@@ -119,11 +119,12 @@ struct Workspace: Codable {
     var forwards: [PortForwardRule] = []
     var logs: [ActivityLog] = []
     var snippets: [CommandSnippet] = []
+    var workScenes: [WorkScene] = []
     var recentTargets: [RecentTarget] = []
     var preferences = Preferences()
     var bookmarks: [String: [String]] = [:]
     var trustedKeys: [String: String] = [:]
-    enum CodingKeys: String, CodingKey { case hosts, groups, groupDefaults, tags, credentials, forwards, logs, snippets, recentTargets, preferences, bookmarks, trustedKeys }
+    enum CodingKeys: String, CodingKey { case hosts, groups, groupDefaults, tags, credentials, forwards, logs, snippets, workScenes, recentTargets, preferences, bookmarks, trustedKeys }
     init() {}
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -135,6 +136,7 @@ struct Workspace: Codable {
         forwards = try values.decodeIfPresent([PortForwardRule].self, forKey: .forwards) ?? []
         logs = try values.decodeIfPresent([ActivityLog].self, forKey: .logs) ?? []
         snippets = try values.decodeIfPresent([CommandSnippet].self, forKey: .snippets) ?? []
+        workScenes = try values.decodeIfPresent([WorkScene].self, forKey: .workScenes) ?? []
         recentTargets = try values.decodeIfPresent([RecentTarget].self, forKey: .recentTargets) ?? []
         preferences = try values.decodeIfPresent(Preferences.self, forKey: .preferences) ?? Preferences()
         bookmarks = try values.decodeIfPresent([String: [String]].self, forKey: .bookmarks) ?? [:]
@@ -183,6 +185,8 @@ enum Palette {
     static let text = Color(hex: "#171A2A")
     static let muted = Color(hex: "#7B8A92")
     static let accent = Color(hex: "#2E91EC")
+    static let localTerminal = accent
+    static let sftp = Color(hex: "#C56A18")
     static let danger = Color(hex: "#C42B38")
     static let blue = Color(hex: "#075479")
     static let orange = Color(hex: "#075479")
@@ -268,7 +272,20 @@ enum Secrets {
     @Published var error: String?
     @Published var sessions: [TerminalSession] = []
     @Published var activeSession: UUID?
+    @Published var terminalFileRequest: TerminalFileRequest?
+    var handledTerminalFileRequestID: UUID?
+    @Published var openScenes: [OpenWorkScene] = []
+    @Published var activeSceneID: UUID?
+    @Published var logViewers: [LogViewerModel] = []
+    @Published var activeLogViewer: UUID?
+    var sceneTasks: [UUID: Task<Void, Never>] = [:]
+    var sceneManagedForwardIDs = Set<UUID>()
+    var sceneTaskTokens: [UUID: UUID] = [:]
+    var forwardSessionIDs: [UUID: UUID] = [:]
     @Published var splitPartners: [UUID: UUID] = [:]
+    var sharedWorkspaceCommit: ((Workspace) -> Bool)?
+    weak var sceneWindowOwner: AppStore?
+    var sceneWindowID: UUID?
     let fileURL: URL
     var applicationIconController = ApplicationIconController.production()
     @Published var forwardStatus: [UUID: String] = [:]
@@ -292,6 +309,7 @@ enum Secrets {
         guard !loadFailed else { error = text("Workspace could not be read. Repair or restore its backup before saving.", "配置读取失败，请修复文件或恢复备份后再保存。"); return false }
         workspace.preferences.scrollback = max(0, min(1000000, workspace.preferences.scrollback))
         workspace.recentTargets = RecentTargets.pruned(workspace.recentTargets, workspace: workspace)
+        if let sharedWorkspaceCommit { return sharedWorkspaceCommit(workspace) }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -438,12 +456,19 @@ enum Secrets {
     }
     func deleteHost(_ id: UUID) throws {
         var updated = workspace; updated.hosts.removeAll { $0.id == id }
+        let removedRules = Set(updated.forwards.filter { $0.hostID == id }.map(\.id))
+        updated.forwards.removeAll { $0.hostID == id }
+        for index in updated.workScenes.indices { updated.workScenes[index].removeHost(id); updated.workScenes[index].forwardIDs.removeAll { removedRules.contains($0) } }
         try commitCredentials(updated, changes: [id: Secrets.Value()])
+        for rule in removedRules { stopForward(rule) }
         deletedHostIDs.insert(id)
     }
     func connect(_ host: Host? = nil) {
         let session = TerminalSession(host: host, store: self)
         sessions.append(session); activeSession = session.id; section = "terminal"
+        if let sceneWindowID, let scene = openScenes.first(where: { $0.id == sceneWindowID }) {
+            scene.sessionIDs.append(session.id); scene.selectedSessionID = session.id; scene.mode = "terminal"; showScene(scene)
+        }
     }
     func openLauncher() { launcherRequest += 1; section = "launcher" }
     func showMonitoring(_ host: Host? = nil) {
@@ -473,12 +498,37 @@ enum Secrets {
         else { connect(host) }
         section = "sftp"
     }
+    var terminalTabs: [TerminalSession] {
+        let standalone = standaloneSessions
+        return standalone.filter { session in
+            guard let peer = splitPartners[session.id], let a = standalone.firstIndex(where: { $0.id == session.id }), let b = standalone.firstIndex(where: { $0.id == peer }) else { return true }
+            return a < b
+        }
+    }
+    func closeTerminalTab(_ id: UUID) {
+        let peer = splitPartners[id]
+        close(id)
+        if let peer { close(peer) }
+    }
+    func separateSession(_ id: UUID) {
+        if let peer = splitPartners.removeValue(forKey: id) { splitPartners.removeValue(forKey: peer) }
+    }
+    func pairSessions(_ source: UUID, with target: UUID) {
+        guard source != target, sessions.contains(where: { $0.id == source }), sessions.contains(where: { $0.id == target }),
+              (sceneWindowID != nil || !openScenes.contains(where: { $0.sessionIDs.contains(source) || $0.sessionIDs.contains(target) })) else { return }
+        for id in [source, target] {
+            if let old = splitPartners.removeValue(forKey: id) { splitPartners.removeValue(forKey: old) }
+        }
+        splitPartners[source] = target; splitPartners[target] = source
+        activeSession = target; section = "terminal"
+    }
     func split() {
         guard let id = activeSession, let current = sessions.first(where: { $0.id == id }) else { connect(); return }
         if let previous = splitPartners.removeValue(forKey: id) { splitPartners.removeValue(forKey: previous) }
         let session = TerminalSession(host: current.host, store: self)
         sessions.append(session); splitPartners[id] = session.id; splitPartners[session.id] = id
-        activeSession = session.id; section = "terminal"
+        if let owner = openScenes.first(where: { $0.sessionIDs.contains(id) }) { owner.sessionIDs.append(session.id) }
+        activeSession = session.id; showTerminalSection()
     }
     func moveSession(_ id: UUID, before target: UUID) {
         guard id != target, let from = sessions.firstIndex(where: { $0.id == id }), let targetIndex = sessions.firstIndex(where: { $0.id == target }) else { return }
@@ -514,8 +564,12 @@ enum Secrets {
         let partner = splitPartners[id]
         splitPartners = splitPartners.filter { $0.key != id && $0.value != id }
         sessions.remove(at: index)
+        for scene in openScenes { scene.sessionIDs.removeAll { $0 == id } }
         if activeSession == id || !sessions.contains(where: { $0.id == activeSession }) {
-            if let partner, sessions.contains(where: { $0.id == partner }) { activeSession = partner }
+            if section == "scene", let scene = currentScene {
+                activeSession = scene.sessionIDs.first { candidate in sessions.contains { $0.id == candidate } }
+                scene.selectedSessionID = activeSession
+            } else if let partner, sessions.contains(where: { $0.id == partner }) { activeSession = partner }
             else { activeSession = sessions.isEmpty ? nil : sessions[min(index, sessions.count - 1)].id }
         }
         if sessions.isEmpty, section == "terminal" { section = "hosts" }

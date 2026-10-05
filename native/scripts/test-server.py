@@ -63,6 +63,10 @@ class Server(paramiko.ServerInterface):
         sock = self.forwards.pop((address, port), None)
         if sock: sock.close()
     def check_channel_direct_tcpip_request(self, channel_id, origin, destination):
+        # This fixture-only hostname verifies that SOCKS domains reach the SSH
+        # server unchanged, without client-side DNS or external network access.
+        if destination == ("axon-socks.test", echo_listener.getsockname()[1]):
+            destination = ("127.0.0.1", destination[1])
         if destination not in [("127.0.0.1", listener.getsockname()[1]), ("127.0.0.1", echo_listener.getsockname()[1])]: return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
         self.destinations[channel_id] = destination
         return paramiko.OPEN_SUCCEEDED

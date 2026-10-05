@@ -93,7 +93,8 @@ struct TagsManagementView: View {
                     Text(store.text("Labels for finding and filtering hosts", "用于搜索和筛选主机的标签")).font(.system(size: 12)).foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(IconButtonStyle())
+                Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(IconButtonStyle()).focusEffectDisabled()
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityLabel(store.text("Close management", "关闭管理"))
             }.padding(20)
             Divider().overlay(Palette.border)
@@ -131,7 +132,7 @@ struct TagsManagementView: View {
                 Button(store.text("Done", "完成")) { dismiss() }.buttonStyle(ChromeButtonStyle()).keyboardShortcut(.cancelAction)
             }.padding(.horizontal, 20).padding(.vertical, 14)
         }.frame(width: 570, height: 560).foregroundStyle(Palette.text).background(Palette.sidebar)
-            .alert(store.text("Delete tag?", "删除标签？"),
+            .appAlert(store.text("Delete tag?", "删除标签？"),
                    isPresented: Binding(get: { deletionName != nil }, set: { if !$0 { deletionName = nil } }), presenting: deletionName) { name in
                 Button(store.text("Cancel", "取消"), role: .cancel) { deletionName = nil }
                 Button(store.text("Delete", "删除"), role: .destructive) { delete(name) }

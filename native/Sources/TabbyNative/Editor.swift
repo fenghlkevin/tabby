@@ -63,7 +63,7 @@ struct FileEditor: View {
             // Keep the backup beside the edited file so changes can be recovered.
             await refresh(); dismiss()
         } catch {
-            if let partial = try? await backend.stat(temp) { try? await backend.delete(partial) }
+            if let partial = try? await backend.stat(temp) { try? await backend.removeStagingFile(partial) }
             self.error = error.localizedDescription
         }
     }

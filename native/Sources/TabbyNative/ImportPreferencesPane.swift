@@ -172,7 +172,7 @@ enum BackupPresentation {
         return (values.filter { !$0.secret.isEmpty }.count, values.filter { !$0.privateKey.isEmpty }.count)
     }
     @MainActor static func confirmRestore(_ archive: WorkspaceArchive, store: AppStore) -> Bool {
-        let alert = NSAlert(); alert.alertStyle = .warning
+        let alert = AppModalAlert(); alert.alertStyle = .warning
         alert.messageText = store.text("Restore this workspace backup?", "恢复此工作区备份？")
         let counts = credentialCounts(archive)
         let hasCredentials = counts.passwords > 0 || counts.privateKeys > 0

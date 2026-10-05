@@ -215,7 +215,7 @@ struct FileTableView: NSViewRepresentable {
     func contextMenu(for rows: IndexSet) -> NSMenu {
         let selected = rows.compactMap { self.rows.indices.contains($0) ? self.rows[$0].entry : nil }
         let parent = rows.compactMap { self.rows.indices.contains($0) ? self.rows[$0].parentPath : nil }.first
-        let menu = NSMenu()
+        let menu = NSMenu(); menu.minimumWidth = 240; menu.font = .systemFont(ofSize: 13)
         menu.autoenablesItems = false
         let actions = selected.isEmpty && parent != nil
             ? [FileTableAction(title: owner.parentTitle, action: { [weak self] in if let parent { self?.owner.onParent(parent) } })]

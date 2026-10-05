@@ -22,7 +22,7 @@ import SwiftTerm
             let hosting = NSHostingView(rootView: MainView().environmentObject(store).preferredColorScheme(.light).tint(Palette.accent))
             let window = show(hosting, size: NSSize(width: width, height: 900)); defer { window.close(); store.monitoring.stop() }
             try await settle(hosting)
-            try assertOneWorkspaceColumn(in: hosting, expected: 8)
+            try assertOneWorkspaceColumn(in: hosting, expected: 9)
             try captureAndAudit(hosting, name: "workspace-sidebar-main-\(Int(width))")
 
             for section in ["hosts", "monitoring", "credentials", "forwards", "snippets", "known", "logs"] {
@@ -44,7 +44,7 @@ import SwiftTerm
                 try assertSettingsColumn(in: hosting)
                 try activateAtPoint(try navigation("axon-settings-back", in: hosting), point: NSPoint(x: 50, y: 22)); try await settle(hosting)
                 XCTAssertEqual(store.section, "hosts")
-                try assertOneWorkspaceColumn(in: hosting, expected: 8)
+                try assertOneWorkspaceColumn(in: hosting, expected: 9)
                 try assertSessionUnchanged(session, terminal: terminal, store: store)
             }
 
@@ -96,7 +96,7 @@ import SwiftTerm
             try activateAtPoint(try navigation("axon-settings-back", in: hosting), point: NSPoint(x: 2, y: 2)); try await settle(hosting)
             XCTAssertEqual(store.section, "hosts")
             XCTAssertEqual(store.settingsPage, .importHosts, "Returning to the workspace retains the chosen settings category")
-            try assertOneWorkspaceColumn(in: hosting, expected: 8)
+            try assertOneWorkspaceColumn(in: hosting, expected: 9)
         }
     }
 

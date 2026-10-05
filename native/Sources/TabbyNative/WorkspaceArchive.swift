@@ -155,7 +155,7 @@ enum WorkspaceArchiveCodec {
         guard archive.createdAt.timeIntervalSince1970.isFinite else { throw WorkspaceArchiveError.invalidArchive }
         let workspace = archive.workspace
         let allIDs = workspace.hosts.map(\.id) + workspace.credentials.map(\.id) + workspace.groupDefaults.map(\.id)
-            + workspace.forwards.map(\.id) + workspace.snippets.map(\.id)
+            + workspace.forwards.map(\.id) + workspace.snippets.map(\.id) + workspace.workScenes.map(\.id)
         guard Set(allIDs).count == allIDs.count else { throw WorkspaceArchiveError.duplicateIdentifier }
         let hostIDs = Set(workspace.hosts.map(\.id))
         let credentialIDs = Set(workspace.credentials.map(\.id))
@@ -202,6 +202,7 @@ enum WorkspaceArchiveCodec {
             }
             for host in workspace.hosts { _ = try ConnectionValidation.host(host, workspace: workspace) }
             for rule in workspace.forwards { _ = try ConnectionValidation.forward(rule, workspace: workspace) }
+            for scene in workspace.workScenes { _ = try scene.validated(workspace: workspace, allowEmpty: true) }
             for snippet in workspace.snippets {
                 _ = try ConnectionValidation.label(snippet.name, required: true)
                 _ = try ConnectionValidation.label(snippet.group)
@@ -250,7 +251,8 @@ enum WorkspaceArchiveCodec {
         // another tool placed a secrets dictionary in the JSON file.
         guard encrypted || raw["secrets"] == nil else { throw WorkspaceArchiveError.invalidArchive }
         guard let workspace = raw["workspace"] as? [String: Any],
-              Set(workspace.keys) == Set(["hosts", "groups", "groupDefaults", "tags", "credentials", "forwards", "logs", "snippets", "recentTargets", "preferences", "bookmarks", "trustedKeys"]) else {
+              Set(workspace.keys).isSuperset(of: Set(["hosts", "groups", "groupDefaults", "tags", "credentials", "forwards", "logs", "snippets", "recentTargets", "preferences", "bookmarks", "trustedKeys"])),
+              Set(workspace.keys).isSubset(of: Set(["hosts", "groups", "groupDefaults", "tags", "credentials", "forwards", "logs", "snippets", "workScenes", "recentTargets", "preferences", "bookmarks", "trustedKeys"])) else {
             throw WorkspaceArchiveError.invalidArchive
         }
         guard workspace["groups"] is [String], workspace["tags"] is [String],
@@ -274,7 +276,8 @@ enum WorkspaceArchiveCodec {
               !preferences.values.contains(where: { $0 is NSNull }) else {
             throw WorkspaceArchiveError.invalidArchive
         }
-        for field in ["hosts", "credentials", "groupDefaults", "forwards", "snippets"] {
+        if let scenes = workspace["workScenes"], !(scenes is [[String: Any]]) { throw WorkspaceArchiveError.invalidArchive }
+        for field in ["hosts", "credentials", "groupDefaults", "forwards", "snippets"] + (workspace["workScenes"] != nil ? ["workScenes"] : []) {
             guard let values = workspace[field] as? [[String: Any]] else { throw WorkspaceArchiveError.invalidArchive }
             for value in values {
                 // CommandSnippet's legacy decoder creates a fresh UUID for a

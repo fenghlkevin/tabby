@@ -5,10 +5,11 @@ import UniformTypeIdentifiers
 struct FilesView: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject var model: FileManagerModel
+    @State private var comparison: DirectoryComparisonModel?
     var body: some View {
         VStack(spacing: 0) {
             FileSplitView {
-                FilePaneView(pane: model.local, model: model, remote: false)
+                FilePaneView(pane: model.local, model: model, remote: false, onCompare: compareDirectories)
             } right: {
                 ZStack {
                     if model.showingHostPicker || model.remote == nil { SFTPHostPicker(model: model) }
@@ -16,7 +17,13 @@ struct FilesView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             TransferQueuePanel(queue: model.queue)
-        }.background(Palette.background).task { if model.remote == nil { await model.open() } }
+        }.background(Palette.background).task(id: store.terminalFileRequest?.id) { await model.open() }
+            .sheet(item: $comparison) { DirectoryComparisonSheet(model: $0).environmentObject(store) }
+    }
+    private func compareDirectories() {
+        if let target = model.remote {
+            comparison = DirectoryComparisonModel(source: model.local, target: target, queue: model.queue, direction: model.rightIsLocal ? "copy" : "upload")
+        }
     }
 }
 
@@ -92,6 +99,7 @@ struct FilePaneView: View {
     @ObservedObject var pane: FilePane
     @ObservedObject var model: FileManagerModel
     var remote: Bool
+    var onCompare: (() -> Void)? = nil
     @State var editingPath = ""
     @State var editingFile: FileEntry?
     @State private var showingFilter = false
@@ -100,43 +108,49 @@ struct FilePaneView: View {
     var endpointIsRemote: Bool { remote && !model.rightIsLocal }
     var bookmarkKey: String { endpointIsRemote ? (model.rightHost?.id.uuidString ?? "remote") : "local" }
     var transferTitle: String { model.rightIsLocal ? (remote ? store.text("Copy to left", "复制到左侧") : store.text("Copy to right", "复制到右侧")) : (remote ? store.text("Download selected", "下载所选") : store.text("Upload selected", "上传所选")) }
+    var compareTitle: String { model.rightIsLocal ? store.text("Compare left → right and copy", "比较左侧 → 右侧并复制") : store.text("Compare left → right and upload", "比较左侧 → 右侧并上传") }
     var body: some View {
         GeometryReader { geometry in
         let toolbar = FilePaneToolbarLayout(width: geometry.size.width, showingFilter: showingFilter, filter: pane.filter)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 if remote {
-                    Button { model.showHostPicker() } label: { HStack(spacing: 9) { IconTile(symbol: "terminal", color: Palette.blue, size: 26); Text(model.rightIsLocal ? store.text("Local", "本地") : (model.rightHost?.name ?? store.text("Remote", "远程"))).lineLimit(1).truncationMode(.tail).layoutPriority(-1); Image(systemName: "chevron.down").font(.system(size: 10)) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.plain).disabled(!model.canSwitchRight).help(store.text("Select host", "选择主机"))
-                } else { HStack(spacing: 9) { IconTile(symbol: "terminal", color: Palette.blue, size: 26); Text(store.text("Local", "本地")).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading) }
+                    Button { model.showHostPicker() } label: { HStack(spacing: 9) { IconTile(symbol: model.rightIsLocal ? "desktopcomputer" : "folder", color: model.rightIsLocal ? Palette.localTerminal : Palette.sftp, size: 26); Text(model.rightIsLocal ? store.text("Local", "本地") : (model.rightHost?.name ?? store.text("Remote", "远程"))).lineLimit(1).truncationMode(.tail).layoutPriority(-1); Image(systemName: "chevron.down").font(.system(size: 10)) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(StableHostPickerButtonStyle()).focusEffectDisabled().disabled(!model.canSwitchRight).help(store.text("Select host", "选择主机"))
+                } else { HStack(spacing: 9) { IconTile(symbol: "terminal", color: Palette.localTerminal, size: 26); Text(store.text("Local", "本地")).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading) }
                 if toolbar.showsInlineFilter {
                     filterField.frame(width: 160)
                 } else {
                     Button { showingFilter = true } label: {
                         if toolbar.compact { Image(systemName: "magnifyingglass").frame(width: 28, height: 28) }
                         else { Label(store.text("Filter", "筛选"), systemImage: "magnifyingglass") }
-                    }.buttonStyle(.plain).fixedSize().help(store.text("Filter", "筛选")).accessibilityLabel(store.text("Filter", "筛选"))
+                    }.buttonStyle(FileToolbarButtonStyle()).fixedSize().help(store.text("Filter", "筛选")).accessibilityLabel(store.text("Filter", "筛选"))
                 }
-                Menu {
-                    Button(transferTitle) { model.transfer(!remote) }.disabled(pane.selected.isEmpty || !model.canTransfer)
-                    Button(store.text("Refresh", "刷新"), action: refreshPane)
-                    Button(store.text("Parent folder", "上级目录")) { Task { await pane.up() } }
+                AppActionMenu {
+                    if let onCompare { Button(action: onCompare) { Label(compareTitle, systemImage: "arrow.left.arrow.right") }.disabled(!model.canTransfer) }
+                    Button(action: refreshPane) { Label(store.text("Refresh", "刷新"), systemImage: "arrow.clockwise") }
+                    Button { Task { await pane.up() } } label: { Label(store.text("Parent folder", "上级目录"), systemImage: "arrow.up") }
                     Divider()
-                    Button(store.text("New file", "新建文件")) { createFile() }
-                    Button(store.text("New folder", "新建目录")) { createDirectory() }
+                    Button { createFile() } label: { Label(store.text("New file", "新建文件"), systemImage: "doc.badge.plus") }
+                    Button { createDirectory() } label: { Label(store.text("New folder", "新建目录"), systemImage: "folder.badge.plus") }
                     Divider()
                     Button(store.text("Sort by name", "按名称排序")) { pane.sort = "name" }
                     Button(store.text("Sort by size", "按大小排序")) { pane.sort = "size" }
                     Button(store.text("Sort by modified date", "按修改时间排序")) { pane.sort = "modified" }
                 } label: {
                     if toolbar.compact { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
-                    else { Text(store.text("Actions", "操作")) }
+                    else { Text(store.text("Actions", "操作")).padding(.horizontal, 6).frame(height: 32).contentShape(Rectangle()) }
                 }.menuStyle(.borderlessButton).menuIndicator(toolbar.compact ? .hidden : .visible).fixedSize().tint(Palette.text).help(store.text("Actions", "操作")).accessibilityLabel(store.text("Actions", "操作"))
-                Menu { ForEach(store.workspace.bookmarks[bookmarkKey] ?? [], id: \.self) { path in Button(path) { Task { await pane.navigate(path) } } }
+                if let onCompare {
+                    Button(action: onCompare) { Image(systemName: "arrow.left.arrow.right.square") }
+                        .buttonStyle(IconButtonStyle()).disabled(!model.canTransfer).help(compareTitle).accessibilityLabel(compareTitle)
+                        .accessibilityIdentifier("axon-compare-directories")
+                }
+                AppActionMenu { ForEach(store.workspace.bookmarks[bookmarkKey] ?? [], id: \.self) { path in Button(path) { Task { await pane.navigate(path) } } }
                     Button(store.text("Bookmark current folder", "收藏当前目录")) {
                         if !(store.workspace.bookmarks[bookmarkKey] ?? []).contains(pane.path) { store.workspace.bookmarks[bookmarkKey, default: []].append(pane.path); store.save() }
                     }
                     Button(store.text("Remove current bookmark", "取消当前收藏")) { store.workspace.bookmarks[bookmarkKey]?.removeAll { $0 == pane.path }; store.save() }
-                } label: { Image(systemName: "bookmark").frame(width: 24, height: 28).foregroundStyle(Palette.muted) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(Palette.text)
+                } label: { Image(systemName: "bookmark").frame(width: 32, height: 32).contentShape(Rectangle()).foregroundStyle(Palette.muted) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(Palette.text)
                 Button { pane.showHidden.toggle() } label: { Image(systemName: "eye").foregroundStyle(pane.showHidden ? Palette.accent : Palette.muted) }.buttonStyle(IconButtonStyle()).accessibilityValue(pane.showHidden ? store.text("Shown", "显示") : store.text("Hidden", "隐藏")).help(store.text("Show hidden files", "显示隐藏文件"))
             }.font(.system(size: 14)).foregroundStyle(Palette.text).padding(.horizontal, 16).frame(height: FilePaneToolbarLayout.headerHeight).background(Palette.sidebar)
             if toolbar.showsFilterRow {
@@ -191,20 +205,36 @@ struct FilePaneView: View {
     }
     func fileActions(_ selected: [FileEntry]) -> [FileTableAction] {
         guard let entry = selected.first else {
-            return [FileTableAction(title: store.text("New file", "新建文件"), action: createFile),
-                    FileTableAction(title: store.text("New folder", "新建目录"), action: createDirectory)]
+            var actions = [FileTableAction(title: store.text("Refresh", "刷新"), action: refreshPane),
+                           FileTableAction(title: store.text("New file", "新建文件"), action: createFile),
+                           FileTableAction(title: store.text("New folder", "新建目录"), action: createDirectory),
+                           FileTableAction(title: store.text("Use this directory in terminal", "在终端中使用此目录"), action: { insertDirectory(pane.path) })]
+            if let onCompare { actions.append(FileTableAction(title: compareTitle, enabled: model.canTransfer, action: onCompare)) }
+            return actions
         }
         var actions = [FileTableAction(title: transferTitle, enabled: model.canTransfer, action: { model.transfer(!remote, entries: selected) })]
-        if !entry.directory && !entry.symlink { actions.append(FileTableAction(title: store.text("Edit text", "编辑文本"), action: { pane.busy = true; editingFile = entry })) }
+        if entry.directory && !entry.symlink {
+            actions.append(FileTableAction(title: store.text("Use this directory in terminal", "在终端中使用此目录"), enabled: selected.count == 1, action: { insertDirectory(entry.path) }))
+        }
+        if !entry.directory && !entry.symlink {
+            actions.append(FileTableAction(title: store.text("Follow log", "跟踪日志"), enabled: selected.count == 1,
+                action: { store.openLogViewer(pane: pane, entry: entry, host: endpointIsRemote ? model.rightHost : nil) }))
+            actions.append(FileTableAction(title: store.text("Edit text", "编辑文本"), action: { pane.busy = true; editingFile = entry }))
+        }
         actions.append(FileTableAction(title: store.text("Rename", "重命名"), enabled: selected.count == 1, action: { rename(entry) }))
         actions.append(FileTableAction(title: store.text("Permissions", "权限"), enabled: selected.count == 1, action: { chmod(entry) }))
         actions.append(FileTableAction(title: store.text("Copy path", "复制路径"), action: { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(selected.map(\.path).joined(separator: "\n"), forType: .string) }))
+        if let onCompare { actions.append(FileTableAction(title: compareTitle, enabled: model.canTransfer, action: onCompare)) }
         actions.append(.divider)
         actions.append(FileTableAction(title: store.text("Delete selected", "删除所选"), action: { delete(selected) }))
         return actions
     }
+    func insertDirectory(_ path: String) {
+        do { try store.insertChangeDirectory(path: path, host: endpointIsRemote ? model.rightHost : nil) }
+        catch { pane.error = error.localizedDescription }
+    }
     func prompt(_ title: String, value: String = "") -> String? {
-        let alert = NSAlert(); alert.messageText = title
+        let alert = AppModalAlert(); alert.messageText = title
         let field = NSTextField(string: value); field.frame = CGRect(x: 0, y: 0, width: 320, height: 24); alert.accessoryView = field
         alert.addButton(withTitle: store.text("Save", "保存")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
@@ -225,7 +255,7 @@ struct FilePaneView: View {
     func rename(_ entry: FileEntry) { guard let name = prompt(store.text("Rename", "重命名"), value: entry.name) else { return }; let base = (entry.path as NSString).deletingLastPathComponent; action { let destination = try remoteJoin(base, name); guard destination != entry.path else { return }; guard try await fileIfExists(destination, backend: pane.backend) == nil else { throw AppFailure.message(store.text("Name already exists", "名称已存在")) }; try await pane.backend.rename(entry.path, destination) } }
     func chmod(_ entry: FileEntry) { guard let value = prompt(store.text("Permissions (octal)", "权限（八进制）"), value: String(entry.permissions, radix: 8)), let mode = UInt32(value, radix: 8), mode <= 0o7777 else { return }; action { try await pane.backend.chmod(entry.path, mode) } }
     func delete(_ entries: [FileEntry]) {
-        let alert = NSAlert(); alert.messageText = store.text("Delete \(entries.count) items?", "删除 \(entries.count) 项？")
+        let alert = AppModalAlert(); alert.messageText = store.text("Delete \(entries.count) items?", "删除 \(entries.count) 项？")
         alert.informativeText = endpointIsRemote ? store.text("Remote deletion is permanent.", "远程文件将永久删除。") : store.text("Local files will move to Trash.", "本地文件将移到废纸篓。")
         alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -289,7 +319,7 @@ struct SFTPHostPicker: View {
                     else { Task { await model.selectLocal(path: model.local.path) } }
                 }.frame(width: 150, height: 40).disabled(!model.canSwitchRight)
                 Spacer()
-                Button { Task { await model.selectLocal() } } label: { Label(store.text("Local", "本地"), systemImage: "terminal") }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(!model.canSwitchRight)
+                Button { Task { await model.selectLocal() } } label: { Label(store.text("Local", "本地"), systemImage: "terminal") }.buttonStyle(ChromeButtonStyle(prominent: true, accentColor: Palette.localTerminal)).disabled(!model.canSwitchRight)
             }.padding(.horizontal, 16).frame(height: 60)
             HStack(spacing: 8) {
                 Image(systemName: "tray.full.fill")
@@ -317,7 +347,7 @@ struct SFTPHostPicker: View {
                                     Text(store.text("Connected", "已连接")).font(.caption).foregroundStyle(Palette.accent)
                                 }
                             }.padding(12).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
-                        }.buttonStyle(.plain).disabled(!model.canSwitchRight)
+                        }.buttonStyle(StableHostPickerButtonStyle()).focusEffectDisabled().disabled(!model.canSwitchRight)
                     }
                     if hosts.isEmpty { Text(store.text("No hosts found", "没有找到主机")).foregroundStyle(Palette.muted).padding(30) }
                 }.padding(.horizontal, 20)

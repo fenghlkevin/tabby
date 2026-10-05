@@ -86,7 +86,7 @@ struct MonitoringVolumeCard: View {
             MonitoringValue(label: store.text("Available", "可用"), value: MonitoringPresentation.bytes(disk.availableBytes))
             Text(disk.device + (disk.filesystem.map { " · " + $0 } ?? "")).font(.system(size: 10)).foregroundStyle(Palette.muted)
                 .lineLimit(1).truncationMode(.middle).help(disk.device + (disk.filesystem.map { " · " + $0 } ?? ""))
-                .contextMenu { Button(store.text("Copy device", "复制设备")) { MonitoringClipboard.copy(disk.device, to: pasteboard) } }
+                .appContextMenu { Button(store.text("Copy device", "复制设备")) { MonitoringClipboard.copy(disk.device, to: pasteboard) } }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
             .accessibilityIdentifier("axon-volume-" + disk.id)
     }

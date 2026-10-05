@@ -19,7 +19,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
             if let known = store.workspace.trustedKeys[endpoint] {
                 guard known == encoded else { validationCompletePromise.fail(AppFailure.message("Host key changed for \(endpoint). Connection rejected.")); return }
             } else {
-                let alert = NSAlert()
+                let alert = AppModalAlert()
                 alert.messageText = store.text("Trust this server?", "信任此服务器？")
                 alert.informativeText = "\(endpoint)\n\(fingerprint)\n" + store.text("Verify this fingerprint before connecting.", "请确认服务器指纹后连接。")
                 alert.addButton(withTitle: store.text("Trust and connect", "信任并连接")); alert.addButton(withTitle: store.text("Cancel", "取消"))
@@ -36,6 +36,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     let id = UUID()
     let creationOrder: UInt64
     let host: Host?
+    weak var sceneFiles: FileManagerModel?
     private(set) var authenticatedUsername: String?
     private(set) var authenticatedAddress: String?
     private(set) var authenticatedPort: Int?
@@ -46,11 +47,19 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         didSet { if title != oldValue { store.objectWillChange.send() } }
     }
     @Published var status = ""
+    @Published private(set) var currentDirectory: String? {
+        didSet { if currentDirectory != oldValue { store.objectWillChange.send() } }
+    }
+    @Published var followDirectoryInFiles = false {
+        didSet { store.objectWillChange.send() }
+    }
+    var pendingDirectoryInsertion: (command: String, host: Host?)?
     @Published var connected = false {
         didSet {
             if connected != oldValue {
                 store.objectWillChange.send()
                 store.monitoring.connectionsChanged()
+                if connected { deliverPendingDirectoryInsertion() }
             }
         }
     }
@@ -298,6 +307,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     /// reconnecting invalidates it before any asynchronous cleanup can return.
     func connectionEnded(request: Int, error: Error? = nil) {
         guard request == generation else { return }
+        pendingDirectoryInsertion = nil
         if error == nil || error is CancellationError {
             if error is CancellationError, let host { store.record("ssh", "cancelled", host: host.name) }
             if store.sessions.contains(where: { $0 === self }) { store.close(id) }
@@ -314,6 +324,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     }
     func disconnect() {
         generation += 1; localProcessGeneration = nil
+        currentDirectory = nil
         authenticationWindow?.cancel()
         if connected, let host { store.record("ssh", "disconnected", host: host.name) }
         inputTask?.cancel(); inputTask = nil
@@ -327,7 +338,14 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: TerminalView, title: String) { if host == nil && !title.isEmpty { self.title = title } }
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) { if host == nil && !title.isEmpty { self.title = title } }
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        guard source === terminal, connected else { return }
+        let previous = currentDirectory
+        currentDirectory = TerminalDirectoryBridge.currentDirectory(directory, trustedHosts: directoryTrustedHosts)
+        guard followDirectoryInFiles, currentDirectory != previous, let currentDirectory else { return }
+        do { try store.openTerminalDirectoryInFiles(sessionID: id, path: currentDirectory, activate: false) }
+        catch { store.error = error.localizedDescription }
+    }
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         guard source === terminal, let request = localProcessGeneration, request == generation else { return }
         if exitCode == 0 { connectionEnded(request: request) }
@@ -380,6 +398,20 @@ extension Optional {
     override func rightMouseDown(with event: NSEvent) {
         if store?.workspace.preferences.rightClickPaste == true { paste(self) } else { super.rightMouseDown(with: event) }
     }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)?.copy() as? NSMenu ?? NSMenu()
+        if getSelection()?.isEmpty == false {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: store?.text("Locate selected path in SFTP", "在 SFTP 定位所选路径") ?? "Locate selected path in SFTP", action: #selector(openSelectedPathInFiles), keyEquivalent: "")
+            item.target = self; menu.addItem(item)
+        }
+        return menu.items.isEmpty ? nil : menu
+    }
+    @objc private func openSelectedPathInFiles() {
+        guard let store, let sessionID else { return }
+        do { try store.openTerminalDirectoryInFiles(sessionID: sessionID, isSelection: true) }
+        catch { store.error = error.localizedDescription }
+    }
     override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); if store?.workspace.preferences.copyOnSelect == true, getSelection()?.isEmpty == false { copy(self) } }
     override func otherMouseDown(with event: NSEvent) { if event.buttonNumber == 2 && store?.workspace.preferences.middleClickPaste != false { paste(self) } else { super.otherMouseDown(with: event) } }
 }
@@ -393,6 +425,20 @@ extension Optional {
         TerminalPaste.perform(text, preferences: store?.workspace.preferences ?? Preferences(), confirm: { TerminalPaste.confirm($0, chinese: store?.chinese == true, window: window) }, send: pasteText)
     }
     override func rightMouseDown(with event: NSEvent) { if store?.workspace.preferences.rightClickPaste == true { paste(self) } else { super.rightMouseDown(with: event) } }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)?.copy() as? NSMenu ?? NSMenu()
+        if getSelection()?.isEmpty == false {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: store?.text("Locate selected path in Files", "在文件面板定位所选路径") ?? "Locate selected path in Files", action: #selector(openSelectedPathInFiles), keyEquivalent: "")
+            item.target = self; menu.addItem(item)
+        }
+        return menu.items.isEmpty ? nil : menu
+    }
+    @objc private func openSelectedPathInFiles() {
+        guard let store, let sessionID else { return }
+        do { try store.openTerminalDirectoryInFiles(sessionID: sessionID, isSelection: true) }
+        catch { store.error = error.localizedDescription }
+    }
     override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); if store?.workspace.preferences.copyOnSelect == true, getSelection()?.isEmpty == false { copy(self) } }
     override func otherMouseDown(with event: NSEvent) { if event.buttonNumber == 2 && store?.workspace.preferences.middleClickPaste != false { paste(self) } else { super.otherMouseDown(with: event) } }
 }

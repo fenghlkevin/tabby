@@ -241,7 +241,7 @@ enum MonitoringSSHExecutor {
         for id in savedCacheTargets.subtracting(savedIDs) where !liveIDs.contains(id) { discardCache(id) }
         let demand: MonitoringDemand
         if store.section == "monitoring" { demand = selectedTargetID.map(MonitoringDemand.target) ?? .overview }
-        else if store.section == "terminal", terminalStatusVisible,
+        else if (store.section == "terminal" || (store.section == "scene" && store.currentScene?.mode == "terminal")), terminalStatusVisible,
                 let session = store.sessions.first(where: { $0.id == store.activeSession }), let id = targetID(for: session) { demand = .target(id) }
         else { demand = .none }
         configure(sources: live, entries: saved + sessionEntries, demand: demand, foreground: foreground)

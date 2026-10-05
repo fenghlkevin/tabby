@@ -18,7 +18,7 @@ for obsolete_icon in "$app/Contents/Resources"/AppIcon-*.icns(N); do
     rm -f "$obsolete_icon"
 done
 # A versioned icon resource lets LaunchServices distinguish the updated artwork.
-cp "$project_root/Branding/AppIcon.icns" "$app/Contents/Resources/AppIcon-48.icns"
+cp "$project_root/Branding/AppIcon.icns" "$app/Contents/Resources/AppIcon-68.icns"
 for resource in "$products"/*.bundle(N); do
     ditto "$resource" "$app/Contents/Resources/${resource:t}"
 done
@@ -31,9 +31,9 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Axon</string>
 <key>CFBundleDisplayName</key><string>Axon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.7.12</string>
-<key>CFBundleVersion</key><string>48</string>
-<key>CFBundleIconFile</key><string>AppIcon-48</string>
+<key>CFBundleShortVersionString</key><string>0.8.19</string>
+<key>CFBundleVersion</key><string>68</string>
+<key>CFBundleIconFile</key><string>AppIcon-68</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>CFBundleDevelopmentRegion</key><string>en</string>
@@ -52,6 +52,6 @@ fi
 codesign --force --deep --sign "$signing_identity" "$app"
 codesign --verify --deep --strict "$app"
 if [[ "$configuration" == release ]]; then
-    ditto -c -k --sequesterRsrc --keepParent "$app" "$project_root/dist/Axon-0.7.12-mac-arm64.zip"
+    ditto -c -k --sequesterRsrc --keepParent "$app" "$project_root/dist/Axon-0.8.19-mac-arm64.zip"
 fi
 print "$app"

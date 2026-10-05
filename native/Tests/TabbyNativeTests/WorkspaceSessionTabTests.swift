@@ -19,12 +19,17 @@ final class WorkspaceSessionTabTests: XCTestCase {
         XCTAssertTrue(view.acceptsFirstMouse(for: nil))
         XCTAssertTrue(view.hitTest(NSPoint(x: 100, y: 17)) === view)
 
+        window.isMovable = true
+        let originalFrame = window.frame
         view.mouseDown(with: try mouse(.leftMouseDown, in: view, x: 100))
+        XCTAssertFalse(window.isMovable)
         view.mouseDragged(with: try mouse(.leftMouseDragged, in: view, x: 102))
         XCTAssertEqual(view.drags.count, 0)
         view.mouseDragged(with: try mouse(.leftMouseDragged, in: view, x: 115))
         view.mouseDragged(with: try mouse(.leftMouseDragged, in: view, x: 140))
         view.mouseUp(with: try mouse(.leftMouseUp, in: view, x: 140))
+        XCTAssertTrue(window.isMovable)
+        XCTAssertEqual(window.frame, originalFrame)
         XCTAssertEqual(view.drags.count, 1)
         XCTAssertEqual(view.drags.first?.string(forType: WorkspaceSessionDrag.type), id.uuidString)
         XCTAssertNil(view.drags.first?.string(forType: .string))
@@ -54,7 +59,8 @@ final class WorkspaceSessionTabTests: XCTestCase {
                          chinese: true, remote: false, canMoveLeft: true, canMoveRight: true)
         target.canDropSession = { id in store.sessions.contains { $0.id == id } }
         target.onDropSession = { id, placement in
-            if placement == .before { store.moveSession(id, before: b.id) }
+            if placement == .split { store.pairSessions(id, with: b.id) }
+            else if placement == .before { store.moveSession(id, before: b.id) }
             else { store.moveSession(id, after: b.id) }
         }
         let left = DragInfo(id: c.id, window: window, point: target.convert(NSPoint(x: 20, y: 17), to: nil))
@@ -64,12 +70,27 @@ final class WorkspaceSessionTabTests: XCTestCase {
         XCTAssertTrue(target.performDragOperation(left))
         XCTAssertEqual(store.sessions.map(\.id), [a.id, c.id, b.id])
         XCTAssertNil(target.dropPlacement)
-        let right = DragInfo(id: a.id, window: window, point: target.convert(NSPoint(x: 180, y: 17), to: nil))
+        let right = DragInfo(id: a.id, window: window, point: target.convert(NSPoint(x: target.bounds.width - 20, y: 17), to: nil))
         XCTAssertEqual(target.draggingEntered(right), .move)
         XCTAssertEqual(target.dropPlacement, .after)
         XCTAssertTrue(target.performDragOperation(right))
         XCTAssertEqual(store.sessions.map(\.id), [c.id, b.id, a.id])
         XCTAssertEqual(store.activeSession, a.id)
+        let center = DragInfo(id: a.id, window: window, point: target.convert(NSPoint(x: target.bounds.midX, y: 17), to: nil))
+        let originalIDs = store.sessions.map(\.id)
+        XCTAssertEqual(target.draggingEntered(center), .move)
+        XCTAssertEqual(target.dropPlacement, .split)
+        XCTAssertTrue(target.performDragOperation(center))
+        XCTAssertEqual(store.sessions.map(\.id), originalIDs)
+        XCTAssertEqual(store.splitPartners[a.id], b.id)
+        XCTAssertEqual(store.splitPartners[b.id], a.id)
+        XCTAssertEqual(store.terminalTabs.count, 2)
+        XCTAssertFalse(store.terminalTabs.contains { $0.id == a.id && store.terminalTabs.contains { $0.id == b.id } })
+        XCTAssertEqual(store.activeSession, b.id)
+        store.pairSessions(c.id, with: b.id)
+        XCTAssertNil(store.splitPartners[a.id])
+        XCTAssertEqual(store.splitPartners[c.id], b.id)
+
         for rejected in [DragInfo(id: b.id, window: window, point: .zero),
                          DragInfo(id: UUID(), window: window, point: .zero),
                          DragInfo(id: c.id, window: window, point: .zero, type: .string),

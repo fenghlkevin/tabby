@@ -12,7 +12,7 @@ struct CredentialsView: View {
                 HStack {
                     HStack(spacing: 0) {
                         Button { newCredential("key") } label: { Label(store.text("NEW KEY", "新建私钥"), systemImage: "key.fill") }.buttonStyle(ChromeButtonStyle())
-                        Menu {
+                        AppActionMenu {
                             Button(store.text("New key", "新建私钥")) { newCredential("key") }
                             Button(store.text("New identity", "新建身份")) { newCredential("password") }
                         } label: { Image(systemName: "chevron.down").font(.system(size: 10)).frame(width: 24) }
@@ -51,7 +51,7 @@ struct CredentialsView: View {
     }
     func newCredential(_ auth: String) { var value = VaultCredential(); value.auth = auth; if auth == "key" { value.keySource = "text" }; editing = value }
     func remove(_ value: VaultCredential) {
-        let alert = NSAlert(); alert.messageText = store.text("Remove identity?", "移除此凭据？")
+        let alert = AppModalAlert(); alert.messageText = store.text("Remove identity?", "移除此凭据？")
         alert.informativeText = store.text("Linked hosts keep independent copies of the credentials.", "引用它的主机会保留独立凭据，不影响后续连接。")
         alert.addButton(withTitle: store.text("Remove", "移除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         if alert.runModal() == .alertFirstButtonReturn { do { try store.removeCredential(value.id) } catch { store.error = error.localizedDescription } }

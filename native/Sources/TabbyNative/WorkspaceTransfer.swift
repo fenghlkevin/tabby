@@ -75,7 +75,7 @@ extension AppStore {
     }
     func restoreArchive(_ archive: WorkspaceArchive) throws {
         try WorkspaceArchiveCodec.validate(archive)
-        guard sessions.isEmpty, forwardTasks.isEmpty else { throw AppFailure.message(text("Close terminal sessions and stop forwarding before restoring", "请先关闭终端会话并停止端口转发，再恢复工作区")) }
+        guard sessions.isEmpty, forwardTasks.isEmpty, openScenes.isEmpty, logViewers.isEmpty else { throw AppFailure.message(text("Close terminals, scenes and log tabs, and stop forwarding before restoring", "请先关闭终端、工作场景和日志标签，并停止端口转发，再恢复工作区")) }
         var changes: [UUID: Secrets.Value] = [:]
         // Restoring a metadata-only backup must not reuse an unrelated old
         // Keychain item that happens to have the same stored identity.

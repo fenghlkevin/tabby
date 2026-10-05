@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @main struct TabbyNativeApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) var delegate
     @StateObject var store = AppStore()
+    private var commandStore: AppStore { SceneWindowController.focusedStore ?? store }
     var body: some Scene {
         Window("Axon", id: "main") {
             MainView().environmentObject(store).onAppear { delegate.store = store }.preferredColorScheme(.light).tint(Palette.accent).frame(minWidth: 1050, minHeight: 680).ignoresSafeArea(.container, edges: .top)
@@ -14,21 +15,21 @@ import UniformTypeIdentifiers
         .defaultSize(width: 1400, height: 860)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button(store.text("Settings…", "设置…")) { store.openPreferences() }.keyboardShortcut(",")
+                Button(commandStore.text("Settings…", "设置…")) { commandStore.openPreferences() }.keyboardShortcut(",")
             }
             CommandGroup(after: .newItem) {
-                Button(store.text("New tab", "新标签")) { store.openLauncher() }.keyboardShortcut("t")
-                Button(store.text("Search hosts or tabs", "搜索主机或标签")) { store.openLauncher() }.keyboardShortcut("k")
-                Button(store.text("New local terminal", "新建本地终端")) { store.connect() }.keyboardShortcut("t", modifiers: [.command, .shift])
-                Button(store.text("Split terminal", "终端分屏")) { store.split() }.keyboardShortcut("d")
-                Button(store.text("Close session", "关闭会话")) { if let id = store.activeSession { store.close(id) } }.keyboardShortcut("w", modifiers: [.command, .shift])
-                Button(store.text("Find in terminal", "搜索终端")) {
-                    if let session = store.sessions.first(where: { $0.id == store.activeSession }) {
-                        store.section = "terminal"
+                Button(commandStore.text("New tab", "新标签")) { commandStore.openLauncher() }.keyboardShortcut("t")
+                Button(commandStore.text("Search hosts or tabs", "搜索主机或标签")) { commandStore.openLauncher() }.keyboardShortcut("k")
+                Button(commandStore.text("New local terminal", "新建本地终端")) { commandStore.connect() }.keyboardShortcut("t", modifiers: [.command, .shift])
+                Button(commandStore.text("Split terminal", "终端分屏")) { commandStore.split() }.keyboardShortcut("d")
+                Button(commandStore.text("Close session", "关闭会话")) { if commandStore.sceneWindowID != nil, commandStore.section == "scene" { SceneWindowController.closeFocused() } else if commandStore.section == "scene", let id = commandStore.activeSceneID { commandStore.closeScene(id) } else if commandStore.section == "logviewer", let id = commandStore.activeLogViewer { commandStore.closeLogViewer(id) } else if let id = commandStore.activeSession { commandStore.closeTerminalTab(id) } }.keyboardShortcut("w", modifiers: [.command, .shift])
+                Button(commandStore.text("Find in terminal", "搜索终端")) {
+                    if let session = commandStore.sessions.first(where: { $0.id == commandStore.activeSession }) {
+                        commandStore.showTerminalSection()
                         let item = NSMenuItem(); item.tag = Int(NSFindPanelAction.showFindPanel.rawValue); session.terminal?.performFindPanelAction(item)
                     }
                 }.keyboardShortcut("f")
-                Button(store.text("Import & Export", "导入与导出")) { store.openPreferences(.importHosts) }
+                Button(commandStore.text("Import & Export", "导入与导出")) { commandStore.openPreferences(.importHosts) }
             }
         }
     }
@@ -45,7 +46,7 @@ import UniformTypeIdentifiers
         }
     }
     private var launched = false
-    func applicationWillTerminate(_ notification: Notification) { store?.automaticBackup.cancel(); store?.monitoring.stop(); store?.forwardTasks.values.forEach { $0.cancel() }; store?.forwardEngines.values.forEach { $0.stop() }; store?.sessions.forEach { $0.disconnect() } }
+    func applicationWillTerminate(_ notification: Notification) { SceneWindowController.closeAll(); store?.automaticBackup.cancel(); store?.monitoring.stop(); store?.forwardTasks.values.forEach { $0.cancel() }; store?.forwardEngines.values.forEach { $0.stop() }; store?.sceneTasks.values.forEach { $0.cancel() }; store?.logViewers.forEach { $0.close() }; store?.sessions.forEach { $0.disconnect() } }
     func applicationDidFinishLaunching(_ notification: Notification) {
         launched = true
         store?.applyApplicationIconAtLaunch()
@@ -139,8 +140,10 @@ struct MainView: View {
     @State private var favoritesOnly = false
     @State private var newTabOpen = false
     @State private var tagsManagementOpen = false
-    private let vaultSections = ["hosts", "monitoring", "credentials", "forwards", "snippets", "known", "logs", "settings"]
+    @State private var sceneLayoutEditing: WorkScene?
+    private let vaultSections = ["hosts", "monitoring", "credentials", "forwards", "snippets", "scenes", "known", "logs", "settings"]
     var vaultSelected: Bool { vaultSections.contains(store.section) }
+    var terminalVisible: Bool { store.section == "terminal" || (store.section == "scene" && store.currentScene?.mode == "terminal") }
     var hostCatalog: HostLibraryCatalog { HostLibraryCatalog(hosts: store.workspace.hosts, group: store.group, query: store.search, tag: selectedTag, favoritesOnly: favoritesOnly, sort: sort, workspace: store.workspace) }
     var filteredHosts: [Host] { hostCatalog.visibleHosts }
     var allTags: [String] { store.tags }
@@ -148,7 +151,7 @@ struct MainView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 workspaceBar
-                Rectangle().fill(store.section == "terminal" ? TerminalChrome.border : Palette.border.opacity(0.6)).frame(height: 1)
+                Rectangle().fill(terminalVisible ? TerminalChrome.border : Palette.border.opacity(0.6)).frame(height: 1)
                 workspaceContent(width: geometry.size.width, height: max(0, geometry.size.height - 53))
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }.foregroundStyle(Palette.text).font(.system(size: 13)).background(Palette.background)
@@ -159,7 +162,8 @@ struct MainView: View {
         .onChange(of: monitoringForeground) { _, _ in updateMonitoring() }
         .onChange(of: terminalToolsVisible) { _, _ in updateMonitoring() }
         .onChange(of: terminalTool) { _, _ in updateMonitoring() }
-        .onChange(of: store.activeSession) { _, _ in updateMonitoring() }
+        .onChange(of: store.currentScene?.mode) { _, _ in updateMonitoring() }
+        .onChange(of: store.activeSession) { _, id in if let scene = store.openScenes.first(where: { $0.sessionIDs.contains(id ?? UUID()) }) { scene.selectedSessionID = id }; updateMonitoring() }
         .onChange(of: store.sessions.map(\.id)) { _, _ in returnToHostsIfNeeded() }
         .onChange(of: store.workspace.hosts) { _, _ in updateMonitoring() }
         .onChange(of: store.workspace.credentials) { _, _ in updateMonitoring() }
@@ -173,11 +177,11 @@ struct MainView: View {
         }
         .onChange(of: allTags) { _, tags in if !selectedTag.isEmpty { selectedTag = tags.first { CatalogNames.matches($0, selectedTag) } ?? "" } }
         .sheet(isPresented: $tagsManagementOpen) { TagsManagementView().environmentObject(store) }
-        .alert(store.text("Error", "错误"), isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button(store.text("OK", "确定")) { store.error = nil } } message: { Text(store.error ?? "") }
+        .appAlert(store.text("Error", "错误"), isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button(store.text("OK", "确定")) { store.error = nil } } message: { Text(store.error ?? "") }
     }
     private func workspaceContent(width: CGFloat, height: CGFloat) -> some View {
         let navigationWidth: CGFloat = vaultSelected ? 185 : 0
-        let toolsWidth: CGFloat = store.section == "terminal" && terminalToolsVisible ? TerminalToolsPanel.width : 0
+        let toolsWidth: CGFloat = terminalVisible && terminalToolsVisible ? TerminalToolsPanel.width : 0
         let inspectorWidth: CGFloat = store.section == "hosts" && (inspectorHost != nil || inspectorGroup != nil) ? 341 : 0
         let centerWidth = max(0, width - navigationWidth - toolsWidth - inspectorWidth)
         return HStack(spacing: 0) {
@@ -186,8 +190,18 @@ struct MainView: View {
                 Rectangle().fill(Palette.border.opacity(0.65)).frame(width: 1, height: height)
             }
             ZStack {
-                sessionArea.opacity(vaultSelected || store.section == "launcher" ? 0 : 1)
-                    .allowsHitTesting(!vaultSelected && store.section != "launcher")
+                VStack(spacing: 0) {
+                    if store.section == "scene", let scene = store.currentScene { WorkSceneToolbar(scene: scene, toggleTools: { terminalToolsVisible.toggle() }) }
+                    ZStack {
+                        sessionArea.opacity(vaultSelected || store.section == "launcher" || store.section == "logviewer" || (store.section == "scene" && store.currentScene?.mode == "logs") ? 0 : 1)
+                            .allowsHitTesting(!vaultSelected && store.section != "launcher" && store.section != "logviewer" && !(store.section == "scene" && store.currentScene?.mode == "logs"))
+                        if store.section == "logviewer" || (store.section == "scene" && store.currentScene?.mode == "logs") {
+                            if let viewer = store.logViewers.first(where: { $0.id == store.activeLogViewer && (store.section != "scene" || store.currentScene?.logIDs.contains($0.id) == true) }) {
+                                LogViewerWorkspace(model: viewer).id(viewer.id)
+                            } else { ContentUnavailableView(store.text("Open a log file", "打开日志文件"), systemImage: "doc.text.magnifyingglass", description: Text(store.text("Choose a saved log above, or open a file from SFTP.", "选择上方的日志路径，或从 SFTP 文件菜单打开。"))) }
+                        }
+                    }
+                }
                 if store.section == "hosts" { hosts }
                 if store.section == "monitoring" { MonitoringVaultView(center: store.monitoring) }
                 if store.section == "settings" { PreferencesView(selection: $store.settingsPage, showsSidebar: false) }
@@ -195,10 +209,11 @@ struct MainView: View {
                 if store.section == "credentials" { CredentialsView() }
                 if store.section == "forwards" { PortForwardsView() }
                 if store.section == "logs" { LogsView() }
+                if store.section == "scenes" { ScrollView { WorkSceneLibrary(query: "").padding(24) } }
                 if store.section == "snippets" { SnippetsView() }
                 if store.section == "launcher" { LauncherView() }
             }.frame(width: centerWidth, height: height).background(Palette.background).clipped()
-            if store.section == "terminal" {
+            if terminalVisible {
                 // Keep the drawer at its full width while the surrounding slot
                 // slides in and out. Only the workspace allocation animates;
                 // the window and the live terminal retain their identities.
@@ -221,13 +236,16 @@ struct MainView: View {
             .animation(store.section == "terminal" && !reduceMotion ? .easeInOut(duration: 0.24) : nil, value: terminalToolsVisible)
     }
     var workspaceTabsWidth: CGFloat {
-        WorkspaceTabStripSizing.contentWidth(sessionWidths: store.sessions.map {
-            store.activeSession == $0.id && store.section == "terminal" ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive
-        }, showsNewTab: newTabOpen)
+        WorkspaceTabStripSizing.contentWidth(sessionWidths: store.terminalTabs.map {
+            (store.activeSession == $0.id || store.activeSession == store.splitPartners[$0.id]) && store.section == "terminal" ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive
+        } + store.sceneFileSessions.map { store.section == "sftp" && store.activeSession == $0.id ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive } + (store.sceneWindowID == nil ? store.openScenes : []).map { store.section == "scene" && store.activeSceneID == $0.id ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive } + store.standaloneLogViewers.map { store.section == "logviewer" && store.activeLogViewer == $0.id ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive }, showsNewTab: newTabOpen)
     }
     var workspaceScrollTarget: String? {
         if store.section == "launcher" && newTabOpen { return "axon-launcher-tab" }
-        if store.section == "terminal", let id = store.activeSession { return "axon-session-tab:" + id.uuidString }
+        if store.section == "terminal", let id = store.activeSession { return "axon-session-tab:" + (store.terminalTabs.first { $0.id == id || store.splitPartners[$0.id] == id }?.id ?? id).uuidString }
+        if store.section == "scene", let id = store.activeSceneID { return "axon-scene-tab:" + id.uuidString }
+        if store.sceneWindowID != nil, store.section == "sftp", let id = store.activeSession { return "axon-file-tab:" + id.uuidString }
+        if store.section == "logviewer", let id = store.activeLogViewer { return "axon-log-tab:" + id.uuidString }
         return nil
     }
     var workspaceBar: some View {
@@ -235,23 +253,38 @@ struct MainView: View {
             HStack(spacing: 0) {
                 Button { store.section = lastVaultSection } label: {
                     Label(store.text("Vaults", "主机库"), systemImage: "lock.shield")
-                }.buttonStyle(WorkspaceTabStyle(selected: vaultSelected, dark: store.section == "terminal")).focusEffectDisabled()
+                }.buttonStyle(WorkspaceTabStyle(selected: vaultSelected, dark: terminalVisible)).focusEffectDisabled()
                 if vaultSelected {
-                    Menu {
+                    AppActionMenu {
                         Button { store.section = lastVaultSection } label: { Label(store.text("Local vault", "本地保险库"), systemImage: "checkmark") }
                     } label: { Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(Palette.chromeText).frame(width: 20, height: 34) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(store.text("Select vault", "选择保险库")).accessibilityLabel(store.text("Select vault", "选择保险库"))
                 }
             }
-            Button { store.section = "sftp" } label: {
-                Label("SFTP", systemImage: "folder.fill").frame(width: store.section == "sftp" ? 108 : 68, alignment: .leading)
-            }.buttonStyle(WorkspaceTabStyle(selected: store.section == "sftp", dark: store.section == "terminal"))
+            if store.sceneWindowID == nil || store.sceneFileSessions.isEmpty {
+                Button { store.section = "sftp" } label: {
+                    Label("SFTP", systemImage: "folder.fill").frame(width: store.section == "sftp" ? 108 : 68, alignment: .leading)
+                }.buttonStyle(WorkspaceTabStyle(selected: store.section == "sftp", dark: terminalVisible))
+            }
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: WorkspaceTabDimensions.spacing) {
-                    ForEach(store.sessions) { session in
+                    ForEach(store.sceneFileSessions) { session in
+                        WorkAreaTab(title: "SFTP · " + (session.host?.name ?? store.text("Local", "本地")), symbol: "folder.fill", selected: store.section == "sftp" && store.activeSession == session.id, select: { store.activeSession = session.id; store.showFileSection() }, close: {
+                            store.currentScene?.definition.directories.removeAll { $0.hostID == session.host?.id }
+                            store.objectWillChange.send()
+                            if store.section == "sftp" { store.showTerminalSection() }
+                        }).id("axon-file-tab:" + session.id.uuidString)
+                    }
+                    ForEach(store.terminalTabs) { session in
                         SessionTab(session: session) { terminalToolsVisible.toggle() }
                             .id("axon-session-tab:" + session.id.uuidString)
+                    }
+                    ForEach(store.sceneWindowID == nil ? store.openScenes : []) { scene in
+                        WorkAreaTab(title: scene.definition.name, symbol: "rectangle.3.group", selected: store.section == "scene" && store.activeSceneID == scene.id, select: { store.showScene(scene) }, close: { store.closeScene(scene.id) }).id("axon-scene-tab:" + scene.id.uuidString)
+                    }
+                    ForEach(store.standaloneLogViewers) { viewer in
+                        WorkAreaTab(title: viewer.title, symbol: "doc.text", selected: store.section == "logviewer" && store.activeLogViewer == viewer.id, select: { store.activeLogViewer = viewer.id; store.section = "logviewer" }, close: { store.closeLogViewer(viewer.id) }).id("axon-log-tab:" + viewer.id.uuidString)
                     }
                     if newTabOpen {
                         HStack(spacing: 8) {
@@ -293,12 +326,16 @@ struct MainView: View {
                     }
                     return true
                 }
+            if store.sceneWindowID != nil {
+                Button { sceneLayoutEditing = store.captureScene() } label: { Label(store.text("Save scene", "保存场景"), systemImage: "square.and.pencil") }.buttonStyle(WorkspaceTabStyle(selected: false, dark: terminalVisible)).help(store.text("Save current tabs and layout as a scene", "将当前标签与布局保存为场景"))
+            }
             WindowDragHandle().frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52).help(store.text("Drag to move window", "拖动此处移动窗口"))
             if store.section == "terminal" {
                 TerminalToolsToggleButton(isVisible: terminalToolsVisible, title: store.text("Terminal tools", "终端工具")) { terminalToolsVisible.toggle() }
                     .frame(width: 28, height: 34)
             }
-        }.padding(.leading, 84).padding(.trailing, 14).frame(height: 52)
+        }.sheet(item: $sceneLayoutEditing) { WorkSceneEditor(value: $0).environmentObject(store) }
+        .padding(.leading, 84).padding(.trailing, 14).frame(height: 52)
             .background(Palette.chrome)
             .focusEffectDisabled().animation(.easeInOut(duration: 0.16), value: store.section)
     }
@@ -333,17 +370,14 @@ struct MainView: View {
                 GeometryReader { geometry in
                 let compact = geometry.size.width < 800
                 HStack(spacing: 10) {
-                    HStack(spacing: 0) {
-                        Button { newHost() } label: { if compact { Image(systemName: "server.rack") } else { Label(store.text("NEW HOST", "新建主机"), systemImage: "server.rack") } }.buttonStyle(ChromeButtonStyle()).help(store.text("New host", "新建主机")).accessibilityLabel(store.text("New host", "新建主机"))
-                        Menu { Button(store.text("New group", "新建分组"), action: newGroup); Button(store.text("Import hosts", "导入主机")) { store.openPreferences(.importHosts) } } label: { Image(systemName: "chevron.down").font(.system(size: 10)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).frame(width: 24).padding(.trailing, 6)
-                    }.background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
-                    Button { store.connect() } label: { if compact { Image(systemName: "terminal") } else { Label(store.text("TERMINAL", "本地终端"), systemImage: "terminal") } }.buttonStyle(ChromeButtonStyle()).help(store.text("Local terminal", "本地终端")).accessibilityLabel(store.text("Local terminal", "本地终端"))
-                    Button(action: newGroup) { if compact { Image(systemName: "folder.badge.plus") } else { Label(store.text("New group", "新建分组"), systemImage: "folder.badge.plus") } }.buttonStyle(ChromeButtonStyle()).help(store.text("New group", "新建分组")).accessibilityLabel(store.text("New group", "新建分组")).accessibilityIdentifier("axon-new-group")
+                    Button { newHost() } label: { if compact { Image(systemName: "server.rack") } else { Label(store.text("NEW HOST", "新建主机"), systemImage: "server.rack") } }.buttonStyle(ChromeButtonStyle()).help(store.text("New host", "新建主机")).accessibilityLabel(store.text("New host", "新建主机"))
+                    Button { store.connect() } label: { if compact { Image(systemName: "terminal") } else { Label(store.text("TERMINAL", "本地终端"), systemImage: "terminal") } }.buttonStyle(ChromeButtonStyle(prominent: true, accentColor: Palette.localTerminal)).help(store.text("Local terminal", "本地终端")).accessibilityLabel(store.text("Local terminal", "本地终端"))
                     Spacer(minLength: 6)
                     HostLibraryLayoutPicker(grid: $gridView, chinese: store.chinese).frame(width: 70, height: 32)
-                    Menu { Button(store.text("All tags", "全部标签")) { selectedTag = "" }; ForEach(allTags, id: \.self) { tag in Button(tag) { selectedTag = tag } }; Divider(); Button(store.text("Manage tags…", "管理标签…")) { tagsManagementOpen = true } } label: { Image(systemName: "tag.fill").foregroundStyle(selectedTag.isEmpty ? Palette.text : Palette.accent); Image(systemName: "chevron.down").font(.system(size: 9)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize()
-                    Menu { Button(store.text("Name", "名称")) { sort = "name" }; Button(store.text("Address", "地址")) { sort = "address" }; Button(store.text("Favorites first", "收藏优先")) { sort = "favorite" } } label: { Image(systemName: "arrow.up.arrow.down"); Image(systemName: "chevron.down").font(.system(size: 9)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize()
+                    AppActionMenu { Button(store.text("All tags", "全部标签")) { selectedTag = "" }; ForEach(allTags, id: \.self) { tag in Button(tag) { selectedTag = tag } }; Divider(); Button(store.text("Manage tags…", "管理标签…")) { tagsManagementOpen = true } } label: { Image(systemName: "tag.fill").foregroundStyle(selectedTag.isEmpty ? Palette.text : Palette.accent); Image(systemName: "chevron.down").font(.system(size: 9)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize()
+                    AppActionMenu { Button(store.text("Name", "名称")) { sort = "name" }; Button(store.text("Address", "地址")) { sort = "address" }; Button(store.text("Favorites first", "收藏优先")) { sort = "favorite" } } label: { Image(systemName: "arrow.up.arrow.down"); Image(systemName: "chevron.down").font(.system(size: 9)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize()
                     Button { favoritesOnly.toggle() } label: { Image(systemName: favoritesOnly ? "star.fill" : "star").foregroundStyle(favoritesOnly ? Palette.accent : Palette.text) }.buttonStyle(IconButtonStyle()).help(store.text("Favorites", "收藏主机"))
+                    Button(action: newGroup) { if compact { Image(systemName: "folder.badge.plus") } else { Label(store.text("New group", "新建分组"), systemImage: "folder.badge.plus") } }.buttonStyle(ChromeButtonStyle()).help(store.text("New group", "新建分组")).accessibilityLabel(store.text("New group", "新建分组")).accessibilityIdentifier("axon-new-group")
                     Button { tagsManagementOpen = true } label: { if compact { Image(systemName: "tag") } else { Label(store.text("Manage tags", "管理标签"), systemImage: "tag") } }.buttonStyle(ChromeButtonStyle()).help(store.text("Manage tags", "管理标签")).accessibilityLabel(store.text("Manage tags", "管理标签"))
                 }
                 }.frame(height: 34)
@@ -368,7 +402,7 @@ struct MainView: View {
                                         HStack(spacing: 12) { IconTile(symbol: "folder.fill", color: Palette.blue); VStack(alignment: .leading, spacing: 6) { Text(group).font(.system(size: 14)).foregroundStyle(Palette.text); Text(String(store.catalogHostCount(group, section: .groups)) + store.text(" hosts", " 台主机")).font(.system(size: 11)).foregroundStyle(Palette.muted) }; Spacer(minLength: 0) }.frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76).contentShape(Rectangle())
                                     }.buttonStyle(.plain)
                                     HostCardActionButton(symbol: "pencil", color: NSColor(Palette.muted), label: store.text("Edit group", "编辑分组"), identifier: "axon-group-edit-" + group) { editGroup(group) }.frame(width: 32, height: 32)
-                                }.padding(.horizontal, 14).frame(height: 76).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 14)).contextMenu {
+                                }.padding(.horizontal, 14).frame(height: 76).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 14)).appContextMenu {
                                     Button(store.text("Edit group", "编辑分组")) { editGroup(group) }
                                     Button(store.text("Delete group", "删除分组（保留主机）")) { deleteGroup(group) }
                                 }
@@ -426,26 +460,31 @@ struct MainView: View {
         if store.section == "launcher", !newTabOpen { store.section = "hosts" }
     }
     func deleteGroup(_ group: String) {
-        let alert = NSAlert(); alert.messageText = store.text("Delete group \(group)?", "删除分组“\(group)”？")
+        let alert = AppModalAlert(); alert.messageText = store.text("Delete group \(group)?", "删除分组“\(group)”？")
         alert.informativeText = store.text("Hosts will be kept and moved to Ungrouped.", "保留分组内的主机，并将其移至未分组。")
         alert.addButton(withTitle: store.text("Delete group", "删除分组")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         if alert.runModal() == .alertFirstButtonReturn { store.dissolveGroup(group) }
     }
     var sessionArea: some View {
         GeometryReader { geometry in
-            let peer = store.activeSession.flatMap { store.splitPartners[$0] }
+            let isScene = store.section == "scene"
+            let terminalMode = store.section == "terminal" || (isScene && store.currentScene?.mode == "terminal")
+            let filesMode = store.section == "sftp" || (isScene && store.currentScene?.mode == "files")
+            let peer = terminalMode ? store.activeSession.flatMap { store.splitPartners[$0] } : nil
             let pair = store.sessions.filter { $0.id == store.activeSession || $0.id == peer }.map(\.id)
             ZStack(alignment: .leading) {
                 ForEach(store.sessions) { session in
-                    let visible = pair.contains(session.id) && !vaultSelected && store.section != "launcher"
-                    SessionWorkspace(session: session, showFiles: store.section == "sftp" && store.activeSession == session.id, active: visible && store.section == "terminal", focused: store.activeSession == session.id)
-                        .frame(width: peer != nil && store.section == "terminal" ? (geometry.size.width - 6) / 2 : geometry.size.width, height: geometry.size.height, alignment: .topLeading)
-                        .offset(x: peer != nil && store.section == "terminal" && session.id != pair.first ? (geometry.size.width + 6) / 2 : 0)
-                        .opacity((store.section == "sftp" ? store.activeSession == session.id : pair.contains(session.id)) ? 1 : 0)
-                        .allowsHitTesting(store.section == "sftp" ? store.activeSession == session.id : pair.contains(session.id))
+                    let sceneMember = !isScene || store.currentScene?.sessionIDs.contains(session.id) == true
+                    let visible = sceneMember && pair.contains(session.id) && !vaultSelected && store.section != "launcher"
+                    SessionWorkspace(session: session, showFiles: filesMode && store.activeSession == session.id, active: visible && terminalMode, focused: store.activeSession == session.id)
+                        .frame(width: peer != nil && terminalMode ? (geometry.size.width - 6) / 2 : geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                        .offset(x: peer != nil && terminalMode && session.id != pair.first ? (geometry.size.width + 6) / 2 : 0)
+                        .opacity(sceneMember && (filesMode ? store.activeSession == session.id : pair.contains(session.id)) ? 1 : 0)
+                        .allowsHitTesting(sceneMember && (filesMode ? store.activeSession == session.id : pair.contains(session.id)))
                 }
-                if peer != nil && store.section == "terminal" { Rectangle().fill(Palette.chrome).frame(width: 6).offset(x: (geometry.size.width - 6) / 2) }
-                if store.sessions.isEmpty && store.section == "sftp" { DisconnectedFilesWorkspace(store: store) }
+                if peer != nil && terminalMode { Rectangle().fill(Palette.chrome).frame(width: 6).offset(x: (geometry.size.width - 6) / 2) }
+                if store.sessions.isEmpty && filesMode { DisconnectedFilesWorkspace(store: store) }
+                if isScene, store.currentScene?.sessionIDs.isEmpty == true { ContentUnavailableView(store.text("Scene sessions have ended", "场景会话已结束"), systemImage: "terminal", description: Text(store.text("Close and reopen this scene to reconnect its saved hosts.", "关闭并重新打开场景，可重新连接已保存的主机。"))) }
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading).clipped()
         }
     }
@@ -479,7 +518,13 @@ struct SessionWorkspace: View {
                 }
                 if showFiles { FilesView(model: files).environmentObject(session.store) }
             }
-        }.background(Color(hex: session.store.workspace.preferences.background)).onChange(of: session.connected) { _, connected in if connected && showFiles { Task { await files.open() } } }
+        }.background(Color(hex: session.store.workspace.preferences.background)).onChange(of: session.connected) { _, connected in
+            if connected && showFiles {
+                Task { await files.open() }
+            }
+        }
+        .task(id: showFiles) { if showFiles { session.sceneFiles = files; await files.open() } }
+        .task(id: session.store.terminalFileRequest?.id) { if showFiles { await files.openTerminalRequestIfNeeded() } }
         .task(id: session.store.recentFileRequest?.id) {
             if showFiles { await files.openRecentRequestIfNeeded() }
         }
@@ -786,10 +831,10 @@ struct SessionTab: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject var session: TerminalSession
     var showTools: () -> Void
-    var selected: Bool { store.activeSession == session.id && store.section == "terminal" }
+    var selected: Bool { (store.activeSession == session.id || store.activeSession == store.splitPartners[session.id]) && store.section == "terminal" }
     var index: Int? { store.sessions.firstIndex(where: { $0.id == session.id }) }
     var body: some View {
-        NativeSessionTab(id: session.id, title: session.displayTitle, selected: selected, connected: session.connected,
+        NativeSessionTab(id: session.id, title: store.splitPartners[session.id].flatMap { peer in store.sessions.first { $0.id == peer } }.map { session.displayTitle + " | " + $0.displayTitle } ?? session.displayTitle, selected: selected, connected: session.connected,
                          dark: store.section == "terminal", chinese: store.chinese, remote: session.host != nil,
                          canMoveLeft: (index ?? 0) > 0, canMoveRight: (index ?? store.sessions.count) < store.sessions.count - 1,
                          onAction: performAction, canDropSession: { id in store.sessions.contains { $0.id == id } },
@@ -797,6 +842,7 @@ struct SessionTab: View {
             switch placement {
             case .before: store.moveSession(id, before: session.id)
             case .after: store.moveSession(id, after: session.id)
+            case .split: store.pairSessions(id, with: session.id)
             }
         }).frame(width: selected ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive, height: 34)
             .focusEffectDisabled()
@@ -804,7 +850,8 @@ struct SessionTab: View {
     func performAction(_ action: SessionTabAction) {
         switch action {
         case .select: store.activeSession = session.id; store.section = "terminal"
-        case .close: store.close(session.id)
+        case .close: store.closeTerminalTab(session.id)
+        case .separate: store.separateSession(session.id)
         case .tools: showTools()
         case .duplicate: store.connect(session.host)
         case .split: store.activeSession = session.id; store.split()
@@ -813,7 +860,7 @@ struct SessionTab: View {
         case .moveRight: store.moveSession(session.id, by: 1)
         case .moveFirst: store.moveSessionToBeginning(session.id)
         case .moveLast: store.moveSessionToEnd(session.id)
-        case .closeOthers: for id in store.sessions.map(\.id) where id != session.id { store.close(id) }
+        case .closeOthers: let peer = store.splitPartners[session.id]; for id in store.standaloneSessions.map(\.id) where id != session.id && id != peer { store.close(id) }
         }
     }
 }

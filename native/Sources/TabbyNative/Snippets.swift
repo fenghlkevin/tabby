@@ -9,8 +9,9 @@ struct CommandSnippet: Codable, Identifiable, Equatable {
     var group = ""
     var body = ""
     var notes = ""
+    var parameters: [SnippetParameter] = []
 
-    enum CodingKeys: String, CodingKey { case id, name, group, body, notes }
+    enum CodingKeys: String, CodingKey { case id, name, group, body, notes, parameters }
     init() {}
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -19,6 +20,7 @@ struct CommandSnippet: Codable, Identifiable, Equatable {
         group = try values.decodeIfPresent(String.self, forKey: .group) ?? ""
         body = try values.decodeIfPresent(String.self, forKey: .body) ?? ""
         notes = try values.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        parameters = try values.decodeIfPresent([SnippetParameter].self, forKey: .parameters) ?? []
     }
 }
 
@@ -73,6 +75,7 @@ enum SnippetInput {
         guard !value.name.isEmpty else { throw AppFailure.message(text("Enter a snippet name", "请输入片段名称")) }
         try SnippetInput.validate(value.body, chinese: chinese)
         value.body = value.body.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        value.parameters = try SnippetParameters.synchronized(value.parameters, body: value.body, chinese: chinese)
         var values = workspace.snippets
         if let index = values.firstIndex(where: { $0.id == value.id }) { values[index] = value }
         else { values.append(value) }
@@ -93,7 +96,8 @@ enum SnippetInput {
     func ungroupSnippets(_ group: String) throws {
         try commitSnippets(workspace.snippets.map { original in var value = original; if value.group == group { value.group = "" }; return value })
     }
-    func sendSnippet(_ snippet: CommandSnippet, to targetIDs: Set<UUID>, action: SnippetAction) throws {
+    func sendSnippet(_ snippet: CommandSnippet, to targetIDs: Set<UUID>, action: SnippetAction, parameterValues: [String: String] = [:]) throws {
+        let body = try SnippetParameters.expanded(snippet, values: parameterValues, chinese: chinese)
         guard !targetIDs.isEmpty else { throw AppFailure.message(text("Choose a connected terminal", "请选择已连接终端")) }
         let targets = sessions.filter { targetIDs.contains($0.id) }
         guard targets.count == targetIDs.count, targets.allSatisfy({ $0.connected && $0.terminal != nil }) else {
@@ -102,11 +106,11 @@ enum SnippetInput {
         // Prepare every target before sending anything, so a failed insertion cannot reach only some sessions.
         let deliveries = try targets.map { session -> (TerminalSession, [UInt8]) in
             let mode = session.terminal!.terminalStateSnapshot().bracketedPasteMode
-            return (session, try SnippetInput.bytes(snippet.body, action: action, bracketedPaste: mode, chinese: chinese))
+            return (session, try SnippetInput.bytes(body, action: action, bracketedPaste: mode, chinese: chinese))
         }
         for (session, bytes) in deliveries { session.terminal?.send(data: bytes[...]) }
         if targets.count == 1, let session = targets.first {
-            activeSession = session.id; section = "terminal"
+            activeSession = session.id; showTerminalSection()
             if let terminal = session.terminal { terminal.window?.makeFirstResponder(terminal) }
         }
     }
@@ -135,7 +139,7 @@ struct SnippetsView: View {
                 HStack {
                     Button { var value = CommandSnippet(); value.group = group ?? ""; editing = value } label: { Label(store.text("NEW SNIPPET", "新建片段"), systemImage: "plus") }.buttonStyle(ChromeButtonStyle())
                     Spacer()
-                    Menu {
+                    AppActionMenu {
                         Button(store.text("Name", "按名称排序")) { newestFirst = false }
                         Button(store.text("Newest first", "最新添加优先")) { newestFirst = true }
                     } label: { Label(store.text("Sort", "排序"), systemImage: "arrow.up.arrow.down") }.menuStyle(.borderlessButton).frame(width: 65)
@@ -158,7 +162,7 @@ struct SnippetsView: View {
                                     Text("\(store.workspace.snippets.filter { $0.group == name }.count)").foregroundStyle(Palette.muted)
                                     Image(systemName: "chevron.right").foregroundStyle(Palette.muted)
                                 }.padding(14).contentShape(Rectangle()).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
-                            }.buttonStyle(.plain).contextMenu {
+                            }.buttonStyle(.plain).appContextMenu {
                                 Button(store.text("Rename group", "重命名分组")) { newGroupName = name; renaming = name }
                                 Button(store.text("Remove group, keep snippets", "取消分组，保留片段")) { perform { try store.ungroupSnippets(name) } }
                             }
@@ -179,14 +183,14 @@ struct SnippetsView: View {
         }.foregroundStyle(Palette.text)
             .sheet(item: $editing) { SnippetEditor(value: $0).environmentObject(store) }
             .sheet(item: $sending) { SnippetSendSheet(snippet: $0).environmentObject(store) }
-            .alert(store.text("Rename group", "重命名分组"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            .appAlert(store.text("Rename group", "重命名分组"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
                 TextField(store.text("Name", "名称"), text: $newGroupName)
                 Button(store.text("Cancel", "取消"), role: .cancel) { renaming = nil }
                 Button(store.text("Save", "保存")) { if let name = renaming { perform { try store.renameSnippetGroup(name, to: newGroupName) } }; renaming = nil }
             }
     }
     func snippetRow(_ value: CommandSnippet) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .center, spacing: 14) {
             IconTile(symbol: "curlybraces", color: Palette.blue)
             Button { editing = value } label: {
                 VStack(alignment: .leading, spacing: 7) {
@@ -196,24 +200,29 @@ struct SnippetsView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             Button(store.text("Use", "使用")) { sending = value }.buttonStyle(ChromeButtonStyle())
-            Menu {
-                Button(store.text("Edit", "编辑")) { editing = value }
-                Button(store.text("Copy command", "复制命令")) { copySnippet(value) }
-                Button(store.text("Duplicate", "复制片段")) { perform { _ = try store.duplicateSnippet(value) } }
-                Button(store.text("Delete", "删除"), role: .destructive) { deleteSnippet(value) }
-            } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24).accessibilityLabel(store.text("Snippet actions", "片段操作"))
+            AppActionMenu {
+                Button { editing = value } label: { Label(store.text("Edit", "编辑"), systemImage: "square.and.pencil") }
+                Button { copySnippet(value) } label: { Label(store.text("Copy command", "复制命令"), systemImage: "doc.on.doc") }
+                Button { perform { _ = try store.duplicateSnippet(value) } } label: { Label(store.text("Duplicate", "复制片段"), systemImage: "plus.square.on.square") }
+                Divider()
+                Button(role: .destructive) { deleteSnippet(value) } label: { Label(store.text("Delete", "删除"), systemImage: "trash") }
+            } label: { Image(systemName: "ellipsis").font(.system(size: 14, weight: .semibold)).frame(width: 34, height: 34).contentShape(Rectangle()) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 34, height: 34)
+                .tint(Palette.text).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
+                .accessibilityLabel(store.text("Snippet actions", "片段操作"))
         }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
-            .contextMenu {
+            .appContextMenu {
                 Button(store.text("Use in terminal", "在终端中使用")) { sending = value }
-                Button(store.text("Edit", "编辑")) { editing = value }
-                Button(store.text("Copy command", "复制命令")) { copySnippet(value) }
-                Button(store.text("Duplicate", "复制片段")) { perform { _ = try store.duplicateSnippet(value) } }
-                Button(store.text("Delete", "删除"), role: .destructive) { deleteSnippet(value) }
+                Button { editing = value } label: { Label(store.text("Edit", "编辑"), systemImage: "square.and.pencil") }
+                Button { copySnippet(value) } label: { Label(store.text("Copy command", "复制命令"), systemImage: "doc.on.doc") }
+                Button { perform { _ = try store.duplicateSnippet(value) } } label: { Label(store.text("Duplicate", "复制片段"), systemImage: "plus.square.on.square") }
+                Divider()
+                Button(role: .destructive) { deleteSnippet(value) } label: { Label(store.text("Delete", "删除"), systemImage: "trash") }
             }
     }
     func perform(_ action: () throws -> Void) { do { try action() } catch { store.error = error.localizedDescription } }
     func deleteSnippet(_ value: CommandSnippet) {
-        let alert = NSAlert(); alert.messageText = store.text("Delete snippet?", "删除代码片段？"); alert.informativeText = value.name
+        let alert = AppModalAlert(); alert.messageText = store.text("Delete snippet?", "删除代码片段？"); alert.informativeText = value.name
         alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         if alert.runModal() == .alertFirstButtonReturn { perform { try store.removeSnippet(value.id) } }
     }
@@ -234,13 +243,32 @@ struct SnippetEditor: View {
             TextField(store.text("Name", "名称"), text: $value.name).appInput()
             HStack {
                 TextField(store.text("Group (optional)", "分组（可选）"), text: $value.group).appInput()
-                Menu { Button(store.text("Ungrouped", "未分组")) { value.group = "" }; ForEach(store.snippetGroups, id: \.self) { name in Button(name) { value.group = name } } } label: { Image(systemName: "folder") }.menuStyle(.borderlessButton).frame(width: 25)
+                AppActionMenu { Button(store.text("Ungrouped", "未分组")) { value.group = "" }; ForEach(store.snippetGroups, id: \.self) { name in Button(name) { value.group = name } } } label: { Image(systemName: "folder") }.menuStyle(.borderlessButton).frame(width: 25)
             }
             TextField(store.text("Description (optional)", "说明（可选）"), text: $value.notes).appInput()
             Text(store.text("Command", "命令内容")).font(.system(size: 12, weight: .medium))
-            SnippetTextEditor(text: $value.body).frame(height: 220).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1))
-            Text(store.text("Use a snippet from the vault or the terminal's Snippets panel.", "可在保险库中使用，或从终端右侧的代码片段面板打开。"))
+            SnippetTextEditor(text: $value.body).frame(height: value.parameters.isEmpty ? 220 : 150).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.border, lineWidth: 1))
+            Text(store.text("Add {{name}} outside quotes for a parameter. Each value becomes one quoted shell argument; do not use parameters in heredocs.", "在引号外添加 {{参数名}}。每个值会转换为一个安全引用的 Shell 参数；请勿在 heredoc 中使用参数。"))
                 .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            if !value.parameters.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach($value.parameters) { $parameter in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("{{\(parameter.name)}}").font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    Spacer()
+                                    Picker(store.text("Type", "类型"), selection: $parameter.type) {
+                                        ForEach(SnippetParameterType.allCases, id: \.self) { type in Text(type.title(chinese: store.chinese)).tag(type) }
+                                    }.labelsHidden().frame(width: 90)
+                                    Toggle(store.text("Required", "必填"), isOn: $parameter.required).toggleStyle(.checkbox).font(.system(size: 11))
+                                }
+                                TextField(store.text("Default value (optional)", "默认值（可选）"), text: $parameter.defaultValue).appInput()
+                            }.padding(10).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }.frame(maxHeight: 200)
+            }
             if !error.isEmpty { Text(error).font(.system(size: 12)).foregroundStyle(.red) }
             HStack {
                 Button(store.text("Cancel", "取消")) { dismiss() }.buttonStyle(ChromeButtonStyle())
@@ -249,6 +277,12 @@ struct SnippetEditor: View {
                     .buttonStyle(ChromeButtonStyle(prominent: true)).disabled(value.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || value.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.padding(24).frame(width: 540).foregroundStyle(Palette.text).background(Palette.sidebar)
+            .onAppear { synchronizeParameters() }
+            .onChange(of: value.body) { _, _ in synchronizeParameters() }
+    }
+    private func synchronizeParameters() {
+        do { value.parameters = try SnippetParameters.synchronized(value.parameters, body: value.body, chinese: store.chinese); error = "" }
+        catch { self.error = error.localizedDescription }
     }
 }
 
@@ -260,13 +294,34 @@ struct SnippetSendSheet: View {
     @State private var selected = Set<UUID>()
     @State private var error = ""
     @State private var confirmingRun = false
+    @State private var parameterValues: [String: String] = [:]
     var connected: [TerminalSession] { store.sessions.filter { $0.connected && $0.terminal != nil } }
     var targets: [TerminalSession] { connected.filter { selected.contains($0.id) } }
+    var parameters: [SnippetParameter] { (try? SnippetParameters.synchronized(snippet.parameters, body: snippet.body)) ?? [] }
+    var expansion: Result<String, Error> { Result { try SnippetParameters.expanded(snippet, values: parameterValues, chinese: store.chinese) } }
+    var expandedCommand: String? { try? expansion.get() }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(snippet.name).font(.system(size: 19, weight: .semibold))
-            ScrollView { Text(snippet.body).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(12) }
+            if !parameters.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 9) {
+                        ForEach(parameters) { parameter in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(parameter.name + (parameter.required ? " *" : "")).font(.system(size: 12, weight: .medium))
+                                    Text(parameter.type.title(chinese: store.chinese)).font(.system(size: 10)).foregroundStyle(Palette.muted)
+                                }.frame(width: 115, alignment: .leading)
+                                TextField(parameter.defaultValue, text: Binding(get: { parameterValues[parameter.name] ?? parameter.defaultValue }, set: { parameterValues[parameter.name] = $0; error = "" })).appInput()
+                            }
+                        }
+                    }
+                }.frame(maxHeight: 160)
+            }
+            Text(store.text("Command preview", "展开后的命令预览")).font(.system(size: 12, weight: .medium))
+            ScrollView { Text(expandedCommand ?? snippet.body).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(12) }
                 .frame(height: 145).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
+            if case .failure(let validationError) = expansion { Text(validationError.localizedDescription).font(.system(size: 11)).foregroundStyle(.red) }
             HStack { Text(store.text("Connected terminals", "已连接终端")).font(.system(size: 12, weight: .medium)); Spacer(); Button(store.text("Select all", "全选")) { selected = Set(connected.map(\.id)) }.buttonStyle(.plain).foregroundStyle(Palette.accent).disabled(connected.isEmpty) }
             ScrollView {
                 LazyVStack(spacing: 8) {
@@ -289,14 +344,14 @@ struct SnippetSendSheet: View {
             if !error.isEmpty { Text(error).font(.system(size: 12)).foregroundStyle(.red) }
             HStack {
                 Button(store.text("Cancel", "取消")) { dismiss() }.buttonStyle(ChromeButtonStyle())
-                Button(store.text("Copy", "复制")) { copySnippet(snippet) }.buttonStyle(ChromeButtonStyle())
+                Button(store.text("Copy", "复制")) { if let command = expandedCommand { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string) } }.buttonStyle(ChromeButtonStyle()).disabled(expandedCommand == nil)
                 Spacer()
-                Button(store.text("Insert", "插入")) { send(.insert) }.buttonStyle(ChromeButtonStyle()).disabled(selected.isEmpty)
-                Button(store.text("Run", "运行")) { confirmingRun = true }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(selected.isEmpty)
+                Button(store.text("Insert", "插入")) { send(.insert) }.buttonStyle(ChromeButtonStyle()).disabled(selected.isEmpty || expandedCommand == nil)
+                Button(store.text("Run", "运行")) { confirmingRun = true }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(selected.isEmpty || expandedCommand == nil)
             }
         }.padding(24).frame(width: 570).foregroundStyle(Palette.text).background(Palette.sidebar)
             .onAppear { if let id = preferredSessionID ?? store.activeSession, connected.contains(where: { $0.id == id }) { selected = [id] } }
-            .alert(store.text("Run snippet?", "运行代码片段？"), isPresented: $confirmingRun) {
+            .appAlert(store.text("Run snippet?", "运行代码片段？"), isPresented: $confirmingRun) {
                 Button(store.text("Cancel", "取消"), role: .cancel) {}
                 Button(store.text("Run", "运行")) { send(.run) }
             } message: {
@@ -304,7 +359,7 @@ struct SnippetSendSheet: View {
             }
     }
     func send(_ action: SnippetAction) {
-        do { try store.sendSnippet(snippet, to: selected, action: action); dismiss() }
+        do { try store.sendSnippet(snippet, to: selected, action: action, parameterValues: parameterValues); dismiss() }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -392,10 +447,10 @@ struct SnippetTerminalPanel: View {
                 }.buttonStyle(.plain)
                     .onHover { hovering in hoveredSnippet = hovering ? value.id : (hoveredSnippet == value.id ? nil : hoveredSnippet) }
                     .animation(.easeOut(duration: 0.12), value: hoveredSnippet == value.id)
-                    .contextMenu {
+                    .appContextMenu {
                     Button(store.text("Use", "使用")) { sending = value }
                     Button(store.text("Copy", "复制")) { copySnippet(value) }
-                    Button(store.text("Edit", "编辑")) { editing = value }
+                    Button { editing = value } label: { Label(store.text("Edit", "编辑"), systemImage: "square.and.pencil") }
                 }
             }
             if filtered.isEmpty {

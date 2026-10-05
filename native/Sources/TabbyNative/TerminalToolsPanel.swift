@@ -119,7 +119,33 @@ struct TerminalToolsPanel: View {
             if let session = store.sessions.first(where: { $0.id == store.activeSession }), session.host != nil {
                 sessionAction(store.text("Reconnect", "重新连接"), symbol: "arrow.clockwise") { session.reconnect() }
             }
+            Rectangle().fill(TerminalChrome.border.opacity(0.6)).frame(height: 1).padding(.vertical, 4)
+            Text(store.text("Files & directory", "文件与目录")).font(.system(size: 14, weight: .semibold))
+            Text(session?.currentDirectory ?? store.text("The shell has not reported its directory", "Shell 尚未上报当前目录"))
+                .font(.system(size: 11, design: .monospaced)).foregroundStyle(TerminalChrome.muted)
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            sessionAction(store.text("Open current directory in SFTP", "在 SFTP 打开当前目录"), symbol: "folder") {
+                directoryAction { if let session { try store.openTerminalDirectoryInFiles(sessionID: session.id) } }
+            }.disabled(session?.currentDirectory == nil || session?.connected != true)
+            sessionAction(store.text("Locate selected path in SFTP", "在 SFTP 定位所选路径"), symbol: "location") {
+                directoryAction { if let session { try store.openTerminalDirectoryInFiles(sessionID: session.id, isSelection: true) } }
+            }.disabled(session?.connected != true)
+            sessionAction(store.text("Report current directory", "上报当前目录"), symbol: "terminal") {
+                directoryAction { if let session { try store.insertDirectoryReport(sessionID: session.id) } }
+            }.disabled(session?.connected != true)
+            Text(store.text("Report inserts a command for review; press Enter to report once. OSC 7 shell integration can report each directory change automatically.", "上报会插入命令供检查，按回车后上报一次。启用 Shell 的 OSC 7 集成可在切换目录时自动上报。"))
+                .font(.system(size: 10)).foregroundStyle(TerminalChrome.muted).fixedSize(horizontal: false, vertical: true)
+            if let session {
+                Toggle(store.text("Follow reported directories in Files", "文件面板跟随上报目录"), isOn: Binding(get: { session.followDirectoryInFiles }, set: { session.followDirectoryInFiles = $0 }))
+                    .toggleStyle(.checkbox).font(.system(size: 11)).disabled(!session.connected)
+                Text(store.text("Only this session. Following keeps your current view open.", "仅作用于此会话，跟随时保留当前视图。"))
+                    .font(.system(size: 10)).foregroundStyle(TerminalChrome.muted)
+            }
         }
+    }
+
+    private func directoryAction(_ action: () throws -> Void) {
+        do { try action() } catch { store.error = error.localizedDescription }
     }
 
     private func sessionAction(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {

@@ -65,7 +65,7 @@ struct TerminalColorPreferencesView: View {
                 Label(message, systemImage: messageIsError ? "exclamationmark.circle" : "checkmark.circle").font(.system(size: 12)).foregroundStyle(messageIsError ? Palette.danger : Palette.accent).fixedSize(horizontal: false, vertical: true)
                     .padding(14).frame(maxWidth: .infinity, alignment: .leading).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
             }
-        }.alert(text("Delete custom scheme?", "删除自定义方案？"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { theme in
+        }.appAlert(text("Delete custom scheme?", "删除自定义方案？"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { theme in
             Button(text("Cancel", "取消"), role: .cancel) { deleting = nil }
             Button(text("Delete scheme", "删除方案"), role: .destructive) { remove(theme); deleting = nil }
         } message: { theme in

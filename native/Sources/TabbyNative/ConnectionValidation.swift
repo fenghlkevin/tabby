@@ -120,11 +120,18 @@ enum ConnectionValidation {
     static func forward(_ original: PortForwardRule, workspace: Workspace? = nil, chinese: Bool = false) throws -> PortForwardRule {
         var rule = original
         rule.name = try label(rule.name, required: true, chinese: chinese)
-        guard let id = rule.hostID, rule.kind == "local" || rule.kind == "remote" else { throw failure("Select an SSH host and forwarding direction", "请选择 SSH 主机和转发方向", chinese: chinese) }
+        guard let id = rule.hostID, ["local", "remote", "dynamic"].contains(rule.kind) else { throw failure("Select an SSH host and forwarding type", "请选择 SSH 主机和转发类型", chinese: chinese) }
         if let workspace, !workspace.hosts.contains(where: { $0.id == id }) { throw failure("SSH host no longer exists", "SSH 主机已不存在", chinese: chinese) }
         rule.bindHost = try address(rule.bindHost, chinese: chinese, allowWildcard: rule.kind == "remote")
-        rule.targetHost = try address(rule.targetHost, chinese: chinese)
-        guard (1...65535).contains(rule.bindPort), (1...65535).contains(rule.targetPort) else { throw failure("Ports must be integers from 1 to 65535", "端口必须是 1–65535 的整数", chinese: chinese) }
+        guard (1...65535).contains(rule.bindPort) else { throw failure("Ports must be integers from 1 to 65535", "端口必须是 1–65535 的整数", chinese: chinese) }
+        if rule.isDynamic {
+            guard rule.bindHost == "127.0.0.1" || rule.bindHost == "::1" else {
+                throw failure("SOCKS5 must listen on 127.0.0.1 or ::1", "SOCKS5 仅支持监听 127.0.0.1 或 ::1", chinese: chinese)
+            }
+        } else {
+            rule.targetHost = try address(rule.targetHost, chinese: chinese)
+            guard (1...65535).contains(rule.targetPort) else { throw failure("Ports must be integers from 1 to 65535", "端口必须是 1–65535 的整数", chinese: chinese) }
+        }
         return rule
     }
 }

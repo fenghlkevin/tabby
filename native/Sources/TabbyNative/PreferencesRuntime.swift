@@ -96,7 +96,7 @@ enum TerminalPaste {
         send(text)
     }
     @MainActor static func confirm(_ text: String, chinese: Bool, window: NSWindow?) -> Bool {
-        let alert = NSAlert()
+        let alert = AppModalAlert()
         alert.messageText = chinese ? "粘贴多行内容？" : "Paste multiple lines?"
         alert.informativeText = chinese ? "多行内容可能立即执行命令，请确认后粘贴。" : "Multiple lines may execute commands immediately. Review before pasting."
         alert.addButton(withTitle: chinese ? "粘贴" : "Paste"); alert.addButton(withTitle: chinese ? "取消" : "Cancel")

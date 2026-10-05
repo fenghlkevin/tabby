@@ -74,11 +74,12 @@ struct LauncherView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.border, lineWidth: 1))
                 .padding(.top, 30)
             HStack(spacing: 12) {
-                Button { store.connect() } label: { Label(store.text("Local terminal", "本地终端"), systemImage: "terminal") }.buttonStyle(ChromeButtonStyle())
+                Button { store.connect() } label: { Label(store.text("Local terminal", "本地终端"), systemImage: "terminal") }.buttonStyle(ChromeButtonStyle(prominent: true, accentColor: Palette.localTerminal))
                 Button { quickConnectOpen = true } label: { Label(store.text("Quick connect", "快速连接"), systemImage: "bolt") }.buttonStyle(ChromeButtonStyle())
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    if selectedGroup == nil { WorkSceneLibrary(query: query).padding(.bottom, 10) }
                     if selectedGroup == nil && !recent.isEmpty {
                         HStack(spacing: 8) {
                             Text(store.text("Recently opened", "最近打开")).font(.system(size: 12, weight: .medium))
@@ -90,7 +91,7 @@ struct LauncherView: View {
                             HStack(spacing: 6) {
                                 Button { store.openRecent(target) } label: {
                                     HStack(spacing: 10) {
-                                        IconTile(symbol: target.kind.isFiles ? "folder" : "terminal", color: Palette.blue, size: 28)
+                                        IconTile(symbol: target.kind.isFiles ? "folder" : "terminal", color: (target.kind == .localTerminal || target.kind == .localFiles) ? Palette.localTerminal : (target.kind.isFiles ? Palette.sftp : Palette.blue), size: 28)
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(store.recentTitle(target)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                             Text(store.recentSubtitle(target)).font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(1)
@@ -102,7 +103,7 @@ struct LauncherView: View {
                                 Button { store.removeRecent(target) } label: { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 24, height: 30) }
                                     .buttonStyle(.plain).foregroundStyle(Palette.muted).help(store.text("Remove from recent", "从最近打开中移除"))
                             }.padding(.horizontal, 10).padding(.vertical, 7).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
-                                .contextMenu { Button(store.text("Remove from recent", "从最近打开中移除")) { store.removeRecent(target) } }
+                                .appContextMenu { Button(store.text("Remove from recent", "从最近打开中移除")) { store.removeRecent(target) } }
                         }
                         Divider().padding(.vertical, 6)
                     }
@@ -152,7 +153,7 @@ struct LauncherView: View {
                     if !sessions.isEmpty {
                         heading(store.text("Open sessions", "已打开的会话"), count: sessions.count).padding(.top, 16)
                         ForEach(sessions) { session in
-                            Button { store.activeSession = session.id; store.section = "terminal" } label: {
+                            Button { store.activeSession = session.id; store.showTerminalSection() } label: {
                                 Label(session.displayTitle, systemImage: "terminal").lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading).padding(12).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                         }
@@ -181,7 +182,7 @@ struct LauncherView: View {
         if let host = quickHost { store.connectQuick(host) }
         else if let group = catalog.visibleGroups.first { selectedGroup = group }
         else if let host = catalog.visibleHosts.first { store.connect(host) }
-        else if let session = sessions.first { store.activeSession = session.id; store.section = "terminal" }
+        else if let session = sessions.first { store.activeSession = session.id; store.showTerminalSection() }
     }
 }
 

@@ -13,9 +13,10 @@ struct PortForwardsView: View {
                 HStack {
                     HStack(spacing: 0) {
                         Button { newRule("local") } label: { Label(store.text("NEW RULE", "新建规则"), systemImage: "arrow.left.arrow.right") }.buttonStyle(ChromeButtonStyle())
-                        Menu {
+                        AppActionMenu {
                             Button(store.text("Local forwarding", "本地转发")) { newRule("local") }
                             Button(store.text("Remote forwarding", "远程转发")) { newRule("remote") }
+                            Button(store.text("Dynamic SOCKS5 proxy", "动态 SOCKS5 代理")) { newRule("dynamic") }
                         } label: { Image(systemName: "chevron.down").font(.system(size: 10)).frame(width: 24) }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).tint(Palette.text).fixedSize().padding(.trailing, 6).accessibilityLabel(store.text("New forwarding menu", "新建转发菜单"))
                     }.background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -28,14 +29,23 @@ struct PortForwardsView: View {
                     ForEach(rules) { rule in
                         VStack(alignment: .leading, spacing: 12) {
                             HStack { IconTile(symbol: "arrow.left.arrow.right", color: Palette.blue); Text(rule.name).font(.headline); Spacer(); Text(store.forwardStatus[rule.id] ?? store.text("Stopped", "已停止")).foregroundStyle(Palette.muted) }
-                            Text((rule.kind == "local" ? store.text("Local", "本地") : store.text("Remote", "远程")) + "  \(rule.bindHost):\(rule.bindPort) → \(rule.targetHost):\(rule.targetPort)").font(.system(.body, design: .monospaced))
+                            Text(rule.isDynamic ? "SOCKS5  \(rule.listeningAddress)" : (rule.kind == "local" ? store.text("Local", "本地") : store.text("Remote", "远程")) + "  \(rule.listeningAddress) → \(rule.targetHost):\(rule.targetPort)").font(.system(.body, design: .monospaced))
+                            if rule.isDynamic {
+                                Text(store.text("TCP proxy · DNS resolved by the SSH server", "TCP 代理 · 域名由 SSH 服务器解析")).font(.caption).foregroundStyle(Palette.muted)
+                            }
                             HStack {
                                 Text(store.workspace.hosts.first(where: { $0.id == rule.hostID })?.name ?? store.text("Host unavailable", "主机不存在")).foregroundStyle(Palette.muted)
                                 Spacer()
+                                if rule.isDynamic {
+                                    Button(store.text("Copy proxy URL", "复制代理 URL")) {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString("socks5h://\(rule.listeningAddress)", forType: .string)
+                                    }
+                                }
                                 if store.forwardTasks[rule.id] == nil {
                                     Button(store.text("Start", "启动")) { store.startForward(rule) }
                                     Button(store.text("Edit", "编辑")) { editing = rule }
-                                    Button(store.text("Remove", "移除")) { store.workspace.forwards.removeAll { $0.id == rule.id }; store.save() }
+                                    Button(store.text("Remove", "移除")) { do { try store.removeForward(rule.id) } catch { store.error = error.localizedDescription } }
                                 } else { Button(store.text("Stop", "停止")) { store.stopForward(rule.id) } }
                             }.buttonStyle(ChromeButtonStyle())
                         }.padding(18).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
@@ -45,7 +55,7 @@ struct PortForwardsView: View {
             }
         }.sheet(item: $editing) { rule in ForwardRuleEditor(rule: rule).environmentObject(store) }
     }
-    func newRule(_ kind: String) { var rule = PortForwardRule(); rule.kind = kind; editing = rule }
+    func newRule(_ kind: String) { var rule = PortForwardRule(); rule.kind = kind; if rule.isDynamic { rule.bindPort = 1080 }; editing = rule }
 }
 
 struct ForwardRuleEditor: View {
@@ -59,22 +69,29 @@ struct ForwardRuleEditor: View {
         do { _ = try ConnectionValidation.forward(rule, workspace: store.workspace, chinese: store.chinese); return nil }
         catch { return error.localizedDescription }
     }
-    var valid: Bool { bindPortValid && targetPortValid && validationMessage == nil }
+    var valid: Bool { bindPortValid && (rule.isDynamic || targetPortValid) && validationMessage == nil }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             PaneHeading(title: store.text("TCP forwarding rule", "TCP 转发规则"))
             TextField(store.text("Name", "名称"), text: $rule.name).appInput()
             Picker(store.text("SSH host", "SSH 主机"), selection: $rule.hostID) { Text(store.text("Select host", "选择主机")).tag(Optional<UUID>.none); ForEach(store.workspace.hosts) { host in Text(host.name).tag(Optional(host.id)) } }
-            Picker(store.text("Direction", "方向"), selection: $rule.kind) { Text(store.text("Local → remote", "本地 → 远程")).tag("local"); Text(store.text("Remote → local", "远程 → 本地")).tag("remote") }.pickerStyle(.segmented)
+            Picker(store.text("Type", "类型"), selection: $rule.kind) { Text(store.text("Local → remote", "本地 → 远程")).tag("local"); Text(store.text("Remote → local", "远程 → 本地")).tag("remote"); Text("SOCKS5").tag("dynamic") }.pickerStyle(.segmented)
             Text(store.text("Listening address / port", "监听地址／端口")).foregroundStyle(Palette.muted)
             HStack { TextField("127.0.0.1", text: $rule.bindHost).appInput(); PortInput(value: $rule.bindPort, valid: $bindPortValid, placeholder: "8080", label: store.text("Listening port", "监听端口")).frame(width: 120) }
-            Text(store.text("Destination address / port", "目标地址／端口")).foregroundStyle(Palette.muted)
-            HStack { TextField("127.0.0.1", text: $rule.targetHost).appInput(); PortInput(value: $rule.targetPort, valid: $targetPortValid, placeholder: "80", label: store.text("Destination port", "目标端口")).frame(width: 120) }
-            Text(store.text("For local forwarding, the destination is reached from the SSH server. For remote forwarding, it is reached from this Mac.", "本地转发的目标由 SSH 服务器访问；远程转发的目标由此 Mac 访问。 ")).font(.caption).foregroundStyle(Palette.muted)
+            if rule.isDynamic {
+                Text(store.text("Configure your application to use this SOCKS5 address with remote DNS. TCP CONNECT only; no authentication. Listening is limited to 127.0.0.1 or ::1.", "在应用中填写此 SOCKS5 地址并开启远程 DNS。支持 TCP CONNECT，无需认证；监听地址限 127.0.0.1 或 ::1。")).font(.caption).foregroundStyle(Palette.muted)
+            } else {
+                Text(store.text("Destination address / port", "目标地址／端口")).foregroundStyle(Palette.muted)
+                HStack { TextField("127.0.0.1", text: $rule.targetHost).appInput(); PortInput(value: $rule.targetPort, valid: $targetPortValid, placeholder: "80", label: store.text("Destination port", "目标端口")).frame(width: 120) }
+                Text(store.text("For local forwarding, the destination is reached from the SSH server. For remote forwarding, it is reached from this Mac.", "本地转发的目标由 SSH 服务器访问；远程转发的目标由此 Mac 访问。 ")).font(.caption).foregroundStyle(Palette.muted)
+            }
             if !error.isEmpty { Text(error).foregroundStyle(.red) }
             else if let validationMessage { Text(validationMessage).font(.caption).foregroundStyle(.red) }
             HStack { Button(store.text("Cancel", "取消")) { dismiss() }; Spacer(); Button(store.text("Save", "保存")) { guard valid else { return }; do { try store.saveForward(rule); dismiss() } catch { self.error = error.localizedDescription } }.disabled(!valid).keyboardShortcut(.defaultAction) }.buttonStyle(ChromeButtonStyle())
-        }.padding(24).frame(width: 520).background(Palette.sidebar)
+        }.padding(24).frame(width: 540).background(Palette.sidebar)
+            .onChange(of: rule.kind) { old, new in
+                if new == "dynamic", old != "dynamic", rule.bindPort == 8080 { rule.bindPort = 1080 }
+            }
     }
 }
 
@@ -104,7 +121,7 @@ struct LogsView: View {
                 if store.workspace.logs.isEmpty { Text(store.text("Connection and forwarding events appear here.", "连接或启动转发后，事件会显示在这里。 ")).foregroundStyle(Palette.muted).padding(30).frame(maxWidth: .infinity) }
             }.padding(.horizontal, 22) }
         }
-        .alert(store.text("Clear all logs?", "清空全部日志？"), isPresented: $confirmingClear) {
+        .appAlert(store.text("Clear all logs?", "清空全部日志？"), isPresented: $confirmingClear) {
             Button(store.text("Cancel", "取消"), role: .cancel) {}
             Button(store.text("Clear all logs", "清空全部日志"), role: .destructive) { store.clearActivityLogs() }
         } message: {

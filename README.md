@@ -390,3 +390,5 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind are welcome!
+
+场景窗口使用最外层终端、SFTP、日志标签，顶栏「保存场景」保存当前终端与分屏、已打开目录和日志。

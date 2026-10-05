@@ -2,10 +2,10 @@ import SwiftUI
 import AppKit
 
 enum SessionTabAction: Int {
-    case select, close, tools, duplicate, split, reconnect, moveLeft, moveRight, moveFirst, moveLast, closeOthers
+    case select, close, tools, duplicate, split, reconnect, moveLeft, moveRight, moveFirst, moveLast, closeOthers, separate
 }
 
-enum SessionTabPlacement: Equatable { case before, after }
+enum SessionTabPlacement: Equatable { case before, after, split }
 
 enum WorkspaceSessionDrag {
     static let type = NSPasteboard.PasteboardType("com.axon.workspace-session")
@@ -51,6 +51,7 @@ class NativeSessionTabView: NSView, NSDraggingSource {
     private var dark = false
     private var chinese = false
     private var remote = false
+    private var windowWasMovable: Bool?
     private var canMoveLeft = false
     private var canMoveRight = false
     private var hovering = false
@@ -118,6 +119,8 @@ class NativeSessionTabView: NSView, NSDraggingSource {
         return .select
     }
     override func mouseDown(with event: NSEvent) {
+        windowWasMovable = window?.isMovable
+        window?.isMovable = false
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         downPoint = point; downAction = pointerAction(at: point); dragStarted = false
@@ -135,7 +138,7 @@ class NativeSessionTabView: NSView, NSDraggingSource {
         guard !dragStarted, bounds.contains(point), let downAction, pointerAction(at: point) == downAction else { return }
         onAction?(downAction)
     }
-    private func resetPointer() { downPoint = nil; downAction = nil; dragStarted = false }
+    private func resetPointer() { if let windowWasMovable { window?.isMovable = windowWasMovable }; windowWasMovable = nil; downPoint = nil; downAction = nil; dragStarted = false }
 
     func draggingPasteboardItem() -> NSPasteboardItem {
         let item = NSPasteboardItem()
@@ -165,10 +168,15 @@ class NativeSessionTabView: NSView, NSDraggingSource {
               id != sessionID, canDropSession?(id) == true else { return nil }
         return id
     }
+    private func placement(at x: CGFloat) -> SessionTabPlacement {
+        if x < bounds.width * 0.25 { return .before }
+        if x > bounds.width * 0.75 { return .after }
+        return .split
+    }
     private func updateDrop(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard droppedSession(sender) != nil else { dropPlacement = nil; needsDisplay = true; return [] }
         let point = convert(sender.draggingLocation, from: nil)
-        dropPlacement = point.x < bounds.midX ? .before : .after
+        dropPlacement = placement(at: point.x)
         needsDisplay = true
         return .move
     }
@@ -183,17 +191,18 @@ class NativeSessionTabView: NSView, NSDraggingSource {
         defer { dropPlacement = nil; needsDisplay = true }
         guard let id = droppedSession(sender) else { return false }
         let point = convert(sender.draggingLocation, from: nil)
-        onDropSession?(id, point.x < bounds.midX ? .before : .after)
+        onDropSession?(id, placement(at: point.x))
         return true
     }
 
     func makeMenu() -> NSMenu {
-        let menu = NSMenu(); menu.autoenablesItems = false
+        let menu = NSMenu(); menu.minimumWidth = 240; menu.font = .systemFont(ofSize: 13); menu.autoenablesItems = false
         func add(_ action: SessionTabAction, _ title: String, enabled: Bool = true) {
             let item = NSMenuItem(title: title, action: #selector(performMenuAction(_:)), keyEquivalent: "")
             item.tag = action.rawValue; item.target = self; item.isEnabled = enabled; menu.addItem(item)
         }
         add(.duplicate, text("Duplicate tab", "复制标签"))
+        add(.separate, text("Separate tabs", "拆分为独立标签"))
         add(.split, text("Split terminal", "终端分屏"))
         if remote { add(.reconnect, text("Reconnect", "重新连接")) }
         menu.addItem(.separator())
@@ -248,7 +257,12 @@ class NativeSessionTabView: NSView, NSDraggingSource {
             (connected ? NSColor(Palette.accent) : NSColor(Palette.muted)).setFill()
             NSBezierPath(ovalIn: NSRect(x: bounds.width - 19, y: 14.5, width: 5, height: 5)).fill()
         }
-        if let dropPlacement {
+        if dropPlacement == .split {
+            NSColor(Palette.accent).setStroke()
+            let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8)
+            outline.lineWidth = 2; outline.stroke()
+            drawSymbol("rectangle.split.2x1", in: NSRect(x: bounds.width - 28, y: 10, width: 16, height: 14), color: NSColor(Palette.accent))
+        } else if let dropPlacement {
             NSColor(Palette.accent).setFill()
             NSBezierPath(roundedRect: NSRect(x: dropPlacement == .before ? 1 : bounds.width - 4, y: 4, width: 3, height: bounds.height - 8), xRadius: 1.5, yRadius: 1.5).fill()
         } else if window?.firstResponder === self {
