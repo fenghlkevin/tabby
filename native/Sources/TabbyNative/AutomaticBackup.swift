@@ -159,7 +159,7 @@ enum AutomaticBackupPersistence {
         return prefix
     }
     static func filename() -> String { "Axon-latest.axonbackup" }
-    static func writeBackup(_ data: Data, to file: URL) throws {
+    static func writeBackup(_ data: Data, to file: URL, overwrite: Bool = true) throws {
         try Task.checkCancellation()
         // Write and sync a private sibling first. Atomic replacement leaves the
         // previous backup intact if writing or publishing the new bytes fails.
@@ -186,7 +186,7 @@ enum AutomaticBackupPersistence {
         guard fsync(descriptor) == 0 else { throw fileError(errno, path: temporary.path) }
         try Task.checkCancellation()
         let published = temporary.path.withCString { source in
-            file.path.withCString { destination in Darwin.rename(source, destination) }
+            file.path.withCString { destination in overwrite ? Darwin.rename(source, destination) : Darwin.link(source, destination) }
         }
         guard published == 0 else { throw fileError(errno, path: file.path) }
     }
@@ -203,9 +203,9 @@ struct AutomaticBackupDependencies {
     var readCredential: (UUID) throws -> Secrets.Value = { try Secrets.readCredential($0, allowInteraction: false) }
     var loadCloudSettings: (URL) throws -> CloudConnectionSettings = { try CloudConnectionPersistence.load(workspaceURL: $0) }
     var resolveFolder: (Data) throws -> URL = AutomaticBackupPersistence.resolveFolder
-    var writeBackup: (Data, URL) throws -> Void = { try AutomaticBackupPersistence.writeBackup($0, to: $1) }
+    var writeBackup: (Data, URL) throws -> Void = { try AutomaticBackupPersistence.writeBackup($0, to: $1, overwrite: $1.lastPathComponent == AutomaticBackupPersistence.filename()) }
     var upload: (Data, S3BackupConfiguration, String) async throws -> Void = {
-        try await S3BackupClient(configuration: $1, secretAccessKey: $2).upload($0, overwrite: true)
+        try await S3BackupClient(configuration: $1, secretAccessKey: $2).upload($0, overwrite: $1.objectKey.hasSuffix("/" + AutomaticBackupPersistence.filename()))
     }
     var encodeArchive: (Workspace, String, [UUID: Secrets.Value]) throws -> Data = {
         try WorkspaceArchiveCodec.encode(workspace: $0, password: $1, secrets: $2)
@@ -292,7 +292,8 @@ struct AutomaticBackupDependencies {
         var result = previousReport
         result.lastAttemptAt = dependencies.now()
         result.generalMessage = nil
-        let name = AutomaticBackupPersistence.filename()
+        let newFile = (try? dependencies.loadCloudSettings(workspaceURL))?.createNewFile ?? true
+        let name = newFile ? BackupNaming.filename(date: dependencies.now()) : AutomaticBackupPersistence.filename()
         let data: Data
         do {
             guard workspaceReadable else { throw AppFailure.message("The workspace could not be read; automatic backup was skipped. / 工作区读取失败，已跳过自动备份。") }

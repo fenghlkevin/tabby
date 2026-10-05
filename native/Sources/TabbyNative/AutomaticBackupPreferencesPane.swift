@@ -6,6 +6,7 @@ struct AutomaticBackupPreferencesPane: View {
     @ObservedObject var coordinator: AutomaticBackupCoordinator
     @Binding var password: String
     @Binding var includeSecrets: Bool
+    var createNewFile = false
     @State private var settings = AutomaticBackupSettings()
     @State private var saved = AutomaticBackupSettings()
     @State private var savedPassword = ""
@@ -24,7 +25,7 @@ struct AutomaticBackupPreferencesPane: View {
     var body: some View {
         BackupCard(title: store.text("Automatic backup", "自动备份"), symbol: "clock.arrow.circlepath") {
             VStack(alignment: .leading, spacing: 16) {
-                Text(store.text("Create an encrypted backup in the background once after each app launch. Configure either or both destinations. Each run updates Axon-latest.axonbackup at the same location.", "每次启动 Axon 后，在后台备份一次。两个目标可单独或同时启用；每次覆盖更新同一位置的 Axon-latest.axonbackup。" )).foregroundStyle(Palette.muted)
+                Text(store.text("Create an encrypted backup in the background once after each app launch. Configure either or both destinations. The new-file option above retains each run; otherwise Axon-latest.axonbackup is updated.", "每次启动 Axon 后，在后台备份一次。两个目标可单独或同时启用；上方开启“每次备份生成新文件”可保留每次备份；关闭时更新 Axon-latest.axonbackup。" )).foregroundStyle(Palette.muted)
                 Toggle(store.text("Back up to iCloud / synced folder on startup", "启动后自动备份到 iCloud / 同步文件夹"), isOn: $settings.folderEnabled)
                     .accessibilityIdentifier("axon-auto-folder-enabled")
                 if settings.folderEnabled {
@@ -39,7 +40,7 @@ struct AutomaticBackupPreferencesPane: View {
                 Toggle(store.text("Upload to S3 on startup", "启动后自动上传到 S3"), isOn: $settings.s3Enabled)
                     .accessibilityIdentifier("axon-auto-s3-enabled")
                 if settings.s3Enabled {
-                    Text(store.text("Automatic S3 object: ", "S3 自动备份对象：") + settings.s3Prefix + "/" + AutomaticBackupPersistence.filename())
+                    Text(store.text("Automatic S3 object: ", "S3 自动备份对象：") + settings.s3Prefix + "/" + (createNewFile ? store.text("Axon-<timestamp>-<id>.axonbackup", "Axon-<时间>-<标识>.axonbackup") : AutomaticBackupPersistence.filename()))
                         .font(.system(size: 11)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("axon-auto-s3-object")
                 }

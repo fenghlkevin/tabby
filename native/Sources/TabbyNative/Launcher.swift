@@ -53,12 +53,13 @@ struct LauncherView: View {
     @State private var query = ""
     @State private var selectedGroup: String?
     @State private var quickConnectOpen = false
+    @State private var showRecentFiles = false
     @FocusState private var searchFocused: Bool
     var catalog: LauncherCatalog { LauncherCatalog(hosts: store.workspace.hosts, groups: store.groups, query: query, selectedGroup: selectedGroup, workspace: store.workspace) }
     var sessions: [TerminalSession] { store.sessions.filter { query.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(query) } }
     var quickHost: Host? { parseLauncherQuickHost(query) }
     var recent: [RecentTarget] {
-        store.recentTargets.filter { query.isEmpty || (store.recentTitle($0) + " " + store.recentSubtitle($0)).localizedCaseInsensitiveContains(query) }
+        store.recentTargets.filter { (showRecentFiles || !$0.kind.isFiles) && (query.isEmpty || (store.recentTitle($0) + " " + store.recentSubtitle($0)).localizedCaseInsensitiveContains(query)) }
     }
     var body: some View {
         VStack(spacing: 18) {
@@ -80,20 +81,37 @@ struct LauncherView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if selectedGroup == nil { WorkSceneLibrary(query: query).padding(.bottom, 10) }
-                    if selectedGroup == nil && !recent.isEmpty {
+                    if selectedGroup == nil && !store.recentTargets.isEmpty {
                         HStack(spacing: 8) {
                             Text(store.text("Recently opened", "最近打开")).font(.system(size: 12, weight: .medium))
-                            Text(store.text("Up to 5 · Last 7 days", "最多 5 项 · 最近 7 天")).font(.system(size: 10)).foregroundStyle(Palette.muted)
+                            Text(store.text("Up to 5 per type · Last 7 days", "每类最多 5 项 · 最近 7 天")).font(.system(size: 10)).foregroundStyle(Palette.muted)
                             Spacer()
+                            PreferencesActionButton(title: (showRecentFiles ? "✓ " : "") + "SFTP", identifier: "recent-files-filter", prominent: showRecentFiles) { showRecentFiles.toggle() }
+                                .frame(width: 76, height: 28)
+                                .accessibilityLabel(store.text("Show SFTP", "显示 SFTP"))
+                                .accessibilityValue(showRecentFiles ? store.text("On", "已开启") : store.text("Off", "已关闭"))
+                                .help(store.text("SSH stays visible. Includes local file browsing.", "SSH 始终显示，同时显示本地文件记录。"))
                             Button(store.text("Clear", "清空")) { store.clearRecent() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.muted)
                         }.padding(.vertical, 4)
+                        if recent.isEmpty {
+                            Text(store.text("No recent SSH connections", "暂无最近 SSH 连接")).font(.system(size: 11)).foregroundStyle(Palette.muted).padding(.vertical, 10)
+                        }
                         ForEach(recent) { target in
                             HStack(spacing: 6) {
                                 Button { store.openRecent(target) } label: {
                                     HStack(spacing: 10) {
                                         IconTile(symbol: target.kind.isFiles ? "folder" : "terminal", color: (target.kind == .localTerminal || target.kind == .localFiles) ? Palette.localTerminal : (target.kind.isFiles ? Palette.sftp : Palette.blue), size: 28)
                                         VStack(alignment: .leading, spacing: 3) {
-                                            Text(store.recentTitle(target)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                            HStack(spacing: 8) {
+                                                Text(store.recentTypeTitle(target))
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundStyle(target.kind.isFiles ? Palette.sftp : Palette.blue)
+                                                    .padding(.horizontal, 7).padding(.vertical, 3)
+                                                    .background((target.kind.isFiles ? Palette.sftp : Palette.blue).opacity(0.12))
+                                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                                                    .fixedSize()
+                                                Text(store.recentTitle(target)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                            }
                                             Text(store.recentSubtitle(target)).font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(1)
                                         }
                                         Spacer(minLength: 4)

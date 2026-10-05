@@ -103,9 +103,9 @@ enum S3BackupError: LocalizedError, Equatable {
 /// Transfers opaque backup bytes; serialization and encryption are handled by the caller.
 struct S3BackupClient {
     static let maximumBackupSize = 20 * 1_024 * 1_024
-    private let configuration: S3BackupConfiguration
-    private let secretAccessKey: String
-    private let session: URLSession
+    let configuration: S3BackupConfiguration
+    let secretAccessKey: String
+    let session: URLSession
 
     init(configuration: S3BackupConfiguration, secretAccessKey: String, session: URLSession = .shared) {
         self.configuration = configuration
@@ -119,6 +119,22 @@ struct S3BackupClient {
         guard data.count <= Self.maximumBackupSize else { throw S3BackupError.responseTooLarge }
         let request = try makeRequest(method: "PUT", body: data, overwrite: overwrite)
         _ = try await S3BackupTransfer.perform(request, using: session, maximumSize: Self.maximumBackupSize)
+    }
+
+    func listRequest(prefix: String, token: String?) throws -> URLRequest {
+        guard !secretAccessKey.isEmpty else { throw S3BackupError.invalidConfiguration("Enter Secret Access Key / 请填写 Secret Access Key") }
+        var components = URLComponents(url: try configuration.objectURL(), resolvingAgainstBaseURL: false)!
+        let suffix = "/" + S3RequestSigner.uriEncode(configuration.objectKey, preserveSlashes: true)
+        guard components.percentEncodedPath.hasSuffix(suffix) else { throw S3BackupError.invalidResponse }
+        components.percentEncodedPath.removeLast(suffix.count)
+        components.queryItems = [URLQueryItem(name: "list-type", value: "2"), URLQueryItem(name: "encoding-type", value: "url"), URLQueryItem(name: "max-keys", value: "1000"), URLQueryItem(name: "prefix", value: prefix)]
+        if let token { components.queryItems?.append(URLQueryItem(name: "continuation-token", value: token)) }
+        components.percentEncodedQuery = components.queryItems?.map { S3RequestSigner.uriEncode($0.name) + "=" + S3RequestSigner.uriEncode($0.value ?? "") }.joined(separator: "&")
+        guard let url = components.url else { throw S3BackupError.invalidResponse }
+        return S3RequestSigner.signedRequest(method: "GET", url: url, body: Data(), accessKeyID: configuration.accessKeyID, secretAccessKey: secretAccessKey, region: configuration.region, date: Date())
+    }
+    func performList(_ request: URLRequest) async throws -> Data {
+        try await S3BackupTransfer.perform(request, using: session, maximumSize: 2 * 1024 * 1024)
     }
 
     func download() async throws -> Data {

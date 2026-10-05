@@ -164,10 +164,10 @@ actor RemoteFiles: FileEndpoint {
 
 @MainActor final class TransferJob: ObservableObject, Identifiable {
     let id = UUID()
-    let entry: FileEntry
+    var entry: FileEntry
     let destination: String
-    let source: any FileEndpoint
-    let target: any FileEndpoint
+    var source: any FileEndpoint
+    var target: any FileEndpoint
     let direction: String
     @Published var state = "queued"
     @Published var completed: UInt64 = 0
@@ -177,6 +177,7 @@ actor RemoteFiles: FileEndpoint {
     @Published var retryAvailable = true
     var retryReason = ""
     var cancelled = false
+    var partials: [String: TransferPartial] = [:]
     let expectation: DirectoryTransferExpectation?
     init(entry: FileEntry, destination: String, source: any FileEndpoint, target: any FileEndpoint, direction: String, expectation: DirectoryTransferExpectation? = nil) {
         self.entry = entry; self.destination = destination; self.source = source; self.target = target; self.direction = direction
@@ -191,13 +192,33 @@ actor RemoteFiles: FileEndpoint {
     var refresh: (() async -> Void)?
     func collapsePanel() { panelExpanded = false }
     func expandPanel() { if !jobs.isEmpty { panelExpanded = true } }
-    func clearFinished() { jobs.removeAll { $0.state == "completed" || $0.state == "cancelled" } }
+    func clearFinished() {
+        for job in jobs where job.state != "queued" && job.state != "running" { discardPartials(job) }
+        jobs.removeAll { $0.state != "queued" && $0.state != "running" }
+    }
+    func rebindFailedEndpoint(_ old: any FileEndpoint, to replacement: any FileEndpoint) {
+        for job in jobs where job.state == "failed" {
+            var rebound = false
+            if (job.source as AnyObject) === (old as AnyObject) { job.source = replacement; rebound = true }
+            if (job.target as AnyObject) === (old as AnyObject) { job.target = replacement; rebound = true }
+            if rebound { job.retryAvailable = true; job.retryReason = "" }
+        }
+    }
+    func discardPartials(_ job: TransferJob) {
+        let partials = Array(job.partials.values); job.partials.removeAll()
+        Task { for partial in partials { if let entry = try? await job.target.stat(partial.path) { try? await job.target.removeStagingFile(entry) } } }
+    }
+    func restart(_ job: TransferJob) {
+        guard job.state != "running", job.state != "queued" else { return }
+        let old = Array(job.partials.values); job.partials.removeAll()
+        Task { for partial in old { if let entry = try? await job.target.stat(partial.path) { try? await job.target.removeStagingFile(entry) } }; do { job.entry = try await job.source.stat(job.entry.path); self.retry(job) } catch { job.error = error.localizedDescription } }
+    }
     func enqueue(_ entry: FileEntry, destination: String, source: any FileEndpoint, target: any FileEndpoint, direction: String, expectation: DirectoryTransferExpectation? = nil) throws {
         try validateLocalTransfer(entry, to: destination, source: source, target: target)
         jobs.append(TransferJob(entry: entry, destination: destination, source: source, target: target, direction: direction, expectation: expectation)); panelExpanded = true; run()
     }
     func retry(_ job: TransferJob) { guard job.retryAvailable else { job.error = job.retryReason; return }; job.cancelled = false; job.completed = 0; job.total = 0; job.error = ""; job.state = "queued"; panelExpanded = true; run() }
-    func cancel(_ job: TransferJob) { job.cancelled = true; if job.state == "queued" { job.state = "cancelled" } }
+    func cancel(_ job: TransferJob) { job.cancelled = true; if job.state == "queued" || job.state == "failed" { job.state = "cancelled"; discardPartials(job) } }
     func run() {
         guard runner == nil else { return }
         runner = Task {
@@ -238,11 +259,20 @@ actor RemoteFiles: FileEndpoint {
             }
         }
         job.total += entry.size
-        let temp = destination + ".tabby-" + UUID().uuidString
+        let previous = job.partials[destination]
+        let temp = previous?.path ?? destination + ".tabby-" + UUID().uuidString
         let backup = destination + ".backup-" + UUID().uuidString
         var backedUp = false
         do {
             var offset: UInt64 = 0
+            if let previous {
+                guard FileContentDigest.sameMetadata(previous.source, entry), sameTransferTarget(previous.target, existing) else { throw AppFailure.message("Source or destination changed; discard partial transfer and start again / 源文件或目标已改变，请丢弃部分传输后重新开始") }
+                if let partial = try await fileIfExists(temp, backend: job.target) {
+                    offset = try await TransferResume.validatedOffset(entry: entry, partial: partial, source: job.source, target: job.target, check: { try self.check(job) })
+                }
+            }
+            job.partials[destination] = TransferPartial(path: temp, source: entry, target: existing)
+            job.completed += offset
             if entry.size == 0 { try await job.target.write(temp, offset: 0, bytes: Data()) }
             while offset < entry.size {
                 try check(job)
@@ -260,15 +290,23 @@ actor RemoteFiles: FileEndpoint {
                 try await expectation.validateTarget(destination, backend: job.target, check: { try self.check(job) })
                 try check(job)
             }
+            let sourceAfter = try await job.source.stat(entry.path)
+            guard FileContentDigest.sameMetadata(entry, sourceAfter), sameTransferTarget(existing, try await fileIfExists(destination, backend: job.target)) else { throw AppFailure.message("Source or destination changed during transfer / 传输期间源文件或目标已改变") }
             if existing != nil { try await job.target.rename(destination, backup); backedUp = true }
             do { try await job.target.rename(temp, destination) }
             catch { if backedUp { try? await job.target.rename(backup, destination) }; throw error }
+            job.partials.removeValue(forKey: destination)
             if backedUp, let old = try? await job.target.stat(backup) {
                 do { try await job.target.removeStagingFile(old) }
                 catch { job.error = "File committed; recovery backup retained at \(backup): \(error.localizedDescription)" }
             }
         } catch {
-            if let partial = try? await job.target.stat(temp) { try? await job.target.removeStagingFile(partial) }
+            // Retain a verified prefix only until explicit retry or queue cleanup.
+            // A committed backup is never treated as resumable payload.
+            if backedUp || job.cancelled || error is CancellationError {
+                if let partial = try? await job.target.stat(temp) { try? await job.target.removeStagingFile(partial) }
+                job.partials.removeValue(forKey: destination)
+            }
             throw error
         }
     }
@@ -303,10 +341,11 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
     @Published private(set) var rightHost: Host?
     @Published private(set) var showingHostPicker: Bool
     @Published var status = ""
+    @Published var showExternalEdits = false
     let queue = TransferQueue()
     let session: TerminalSession
     private var lease: FileEndpointLease?
-    private var rightAuthenticatedUsername: String?
+    private(set) var rightAuthenticatedUsername: String?
     private var rightConnectionSnapshot: Host?
     private var rightSecretSourceID: UUID?
     private var rightRouteSnapshot: [MonitoringRouteHop] = []
@@ -314,7 +353,7 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
     private var localObservation: AnyCancellable?
     private var remoteObservation: AnyCancellable?
     private var generation = 0
-    private var opening = false
+    @Published private(set) var opening = false
     private var handledRecentFileRequest: UUID?
     private var initializedSceneLocations = false
     private var initialSceneLocalDirectory: String?
@@ -467,6 +506,8 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
            rightConnectionSnapshot == profileSnapshot, rightSecretSourceID == secretSourceID, rightRouteSnapshot == routeSnapshot {
             showingHostPicker = false; status = ""; return
         }
+        let oldBackend = rightHost?.id == host.id && rightConnectionSnapshot == profileSnapshot && rightSecretSourceID == secretSourceID && rightRouteSnapshot == routeSnapshot ? remote?.backend : nil
+        let previousTransfers = queue.runner
         generation += 1; let request = generation
         let username = RecentTargets.effectiveUsername(host, workspace: session.store.workspace)
         retireCurrentLease()
@@ -480,6 +521,14 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
             if let remoteOpener { opened = try await remoteOpener(host) }
             else { opened = try await openRemote(host, request: request) }
             guard request == generation else { await opened.release(); return }
+            if let oldBackend {
+                Task { [weak self] in
+                    await previousTransfers?.value
+                    guard let self, self.remote === opened.pane, opened.isActive() else { return }
+                    self.queue.rebindFailedEndpoint(oldBackend, to: opened.pane.backend)
+                    self.session.store.externalEdits.rebind(oldBackend, to: opened.pane)
+                }
+            }
             lease = opened; remote = opened.pane; rightAuthenticatedUsername = opened.authenticatedUsername ?? username; status = ""
             rightConnectionSnapshot = profileSnapshot; rightSecretSourceID = secretSourceID; rightRouteSnapshot = routeSnapshot
             showingHostPicker = false
@@ -609,5 +658,31 @@ func validateLocalTransfer(_ entry: FileEntry, to destination: String, source: a
         let source = upload ? local : remote; let target = upload ? remote : local
         do { try enqueue(entries ?? source.chosen, from: source.backend, to: target, direction: rightIsLocal ? "copy" : upload ? "upload" : "download") }
         catch { target.error = error.localizedDescription }
+    }
+}
+
+struct TransferPartial {
+    let path: String
+    let source: FileEntry
+    let target: FileEntry?
+}
+func sameTransferTarget(_ left: FileEntry?, _ right: FileEntry?) -> Bool {
+    switch (left, right) { case (nil, nil): return true; case let (a?, b?): return FileContentDigest.sameMetadata(a, b); default: return false }
+}
+enum TransferResume {
+    static func validatedOffset(entry: FileEntry, partial: FileEntry, source: any FileEndpoint, target: any FileEndpoint, check: () throws -> Void = {}) async throws -> UInt64 {
+        guard !partial.symlink, !partial.directory, partial.size <= entry.size else { throw AppFailure.message("Invalid partial transfer / 部分传输文件无效") }
+        guard FileContentDigest.sameMetadata(entry, try await source.stat(entry.path)) else { throw AppFailure.message("Source changed / 源文件已改变") }
+        var offset: UInt64 = 0
+        while offset < partial.size {
+            try check(); try Task.checkCancellation()
+            let size = Int(min(256 * 1024, partial.size - offset))
+            let expected = try await source.read(entry.path, offset: offset, count: size)
+            let actual = try await target.read(partial.path, offset: offset, count: size)
+            guard expected.count == size, expected == actual else { throw AppFailure.message("Partial contents changed; restart the transfer / 部分文件内容已改变，请重新传输") }
+            offset += UInt64(size)
+        }
+        guard FileContentDigest.sameMetadata(partial, try await target.stat(partial.path)) else { throw AppFailure.message("Partial file changed during verification") }
+        return offset
     }
 }

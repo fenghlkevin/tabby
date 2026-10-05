@@ -22,10 +22,10 @@ import SwiftTerm
             let hosting = NSHostingView(rootView: MainView().environmentObject(store).preferredColorScheme(.light).tint(Palette.accent))
             let window = show(hosting, size: NSSize(width: width, height: 900)); defer { window.close(); store.monitoring.stop() }
             try await settle(hosting)
-            try assertOneWorkspaceColumn(in: hosting, expected: 9)
+            try assertOneWorkspaceColumn(in: hosting, expected: 10)
             try captureAndAudit(hosting, name: "workspace-sidebar-main-\(Int(width))")
 
-            for section in ["hosts", "monitoring", "credentials", "forwards", "snippets", "known", "logs"] {
+            for section in ["hosts", "monitoring", "credentials", "forwards", "snippets", "batchTasks", "known", "logs"] {
                 for pointIndex in 0..<6 {
                     let button = try navigation("axon-navigation-" + section, in: hosting)
                     try activateAtPoint(button, point: points(button)[pointIndex]); try await settle(hosting)
@@ -44,7 +44,7 @@ import SwiftTerm
                 try assertSettingsColumn(in: hosting)
                 try activateAtPoint(try navigation("axon-settings-back", in: hosting), point: NSPoint(x: 50, y: 22)); try await settle(hosting)
                 XCTAssertEqual(store.section, "hosts")
-                try assertOneWorkspaceColumn(in: hosting, expected: 9)
+                try assertOneWorkspaceColumn(in: hosting, expected: 10)
                 try assertSessionUnchanged(session, terminal: terminal, store: store)
             }
 
@@ -71,12 +71,14 @@ import SwiftTerm
             }
 
             store.openPreferences(.storage); try await settle(hosting)
-            for id in ["axon-cloud-upload", "axon-cloud-download", "axon-cloud-save", "axon-cloud-folder-save"] {
+            for id in ["axon-cloud-upload", "axon-cloud-download", "axon-cloud-folder-save"] {
                 let control = try XCTUnwrap(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == id })
                 XCTAssertFalse(control.isEnabled, "Cloud actions stay disabled without credentials or a backup password")
                 XCTAssertFalse(control.accessibilityPerformPress())
                 control.performClick(nil)
             }
+            let saveConnection = try XCTUnwrap(find(PreferencesRectNativeButton.self, in: hosting).first { $0.identifier?.rawValue == "axon-cloud-save" })
+            XCTAssertTrue(saveConnection.isEnabled, "Saving connection metadata does not require a backup password")
             XCTAssertFalse(FileManager.default.fileExists(atPath: CloudConnectionPersistence.url(workspaceURL: store.fileURL).path))
             // The menu/toolbar import route binds to the same settings column.
             store.openPreferences(.importHosts); try await settle(hosting)
@@ -96,7 +98,7 @@ import SwiftTerm
             try activateAtPoint(try navigation("axon-settings-back", in: hosting), point: NSPoint(x: 2, y: 2)); try await settle(hosting)
             XCTAssertEqual(store.section, "hosts")
             XCTAssertEqual(store.settingsPage, .importHosts, "Returning to the workspace retains the chosen settings category")
-            try assertOneWorkspaceColumn(in: hosting, expected: 9)
+            try assertOneWorkspaceColumn(in: hosting, expected: 10)
         }
     }
 
@@ -108,7 +110,7 @@ import SwiftTerm
     }
     private func assertSettingsColumn(in hosting: NSView) throws {
         let buttons = find(PreferencesNavigationNativeButton.self, in: hosting)
-        XCTAssertEqual(buttons.count, 10, "Nine settings categories plus Back share the existing sidebar")
+        XCTAssertEqual(buttons.count, PreferencesPage.allCases.count + 1, "Settings categories plus Back share the existing sidebar")
         XCTAssertEqual(Set(buttons.compactMap { $0.identifier?.rawValue }), Set(PreferencesPage.allCases.map { "axon-preferences-page-" + $0.rawValue } + ["axon-settings-back"]))
         XCTAssertEqual(buttons.filter(\.selected).count, 1)
         for button in buttons { try assertSidebarGeometry(button, in: hosting) }

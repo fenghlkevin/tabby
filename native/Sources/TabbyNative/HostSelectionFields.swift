@@ -178,3 +178,28 @@ struct JumpHostChooser: View {
             .onAppear { focused = true }
     }
 }
+
+/// Typed choices share Axon's selection surface and below-field menu placement.
+struct AxonChoiceField<Value: Equatable>: View {
+    @Binding var selection: Value
+    let choices: [(Value, String)]
+    let placeholder: String
+    let symbol: String
+    let identifier: String
+    var body: some View {
+        NativeSelectionField(title: choices.first { $0.0 == selection }?.1 ?? placeholder,
+                             symbol: symbol, label: placeholder, identifier: identifier) { button in
+            makeMenu(width: button.bounds.width).popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 3), in: button)
+        }
+    }
+    func makeMenu(width: CGFloat) -> NSMenu {
+        let menu = NSMenu(); menu.autoenablesItems = false; menu.minimumWidth = width
+        for (value, title) in choices {
+            let item = NSMenuItem(title: title, action: #selector(SelectionMenuAction.selectGroup(_:)), keyEquivalent: "")
+            let action = SelectionMenuAction { selection = value }
+            item.target = action; item.representedObject = action; item.state = selection == value ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+}

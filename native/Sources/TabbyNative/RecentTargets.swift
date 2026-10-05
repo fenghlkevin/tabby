@@ -82,6 +82,7 @@ enum RecentTargets {
     static func pruned(_ targets: [RecentTarget], workspace: Workspace, now: Date = Date()) -> [RecentTarget] {
         let cutoff = now.addingTimeInterval(-maximumAge)
         var seen = Set<String>()
+        var categoryCounts: [Bool: Int] = [:]
         return targets.filter { $0.lastOpened >= cutoff && $0.lastOpened <= now }
             .compactMap { target -> RecentTarget? in
                 if target.kind == .localTerminal || target.kind == .localFiles {
@@ -95,7 +96,13 @@ enum RecentTargets {
             }
             .sorted { $0.lastOpened == $1.lastOpened ? $0.id < $1.id : $0.lastOpened > $1.lastOpened }
             .filter { seen.insert($0.id).inserted }
-            .prefix(maximumCount).map { $0 }
+            .filter { target in
+                let category = target.kind.isFiles
+                let count = categoryCounts[category, default: 0]
+                guard count < maximumCount else { return false }
+                categoryCounts[category] = count + 1
+                return true
+            }
     }
     /// A live connection may have identical coordinates but come from a
     /// different vault profile, identity, or jump route. Those are distinct
@@ -109,7 +116,7 @@ enum RecentTargets {
         let requested = GroupDefaults.resolved(groupSnapshotForReuse(requested, workspace: workspace), workspace: workspace)
         guard current.credentialID == requested.credentialID, current.jumpHostID == requested.jumpHostID else { return false }
         if current.credentialID == nil {
-            guard current.auth == requested.auth, current.keyPath == requested.keyPath, current.keySource == requested.keySource else { return false }
+            guard current.persistentSession == requested.persistentSession, current.persistentSessionName == requested.persistentSessionName, current.auth == requested.auth, current.keyPath == requested.keyPath, current.keySource == requested.keySource else { return false }
         }
         return true
     }
@@ -162,10 +169,18 @@ enum RecentTargets {
             return host.name.isEmpty ? host.address : host.name
         }
     }
+    func recentTypeTitle(_ target: RecentTarget) -> String {
+        switch target.kind {
+        case .ssh: return "SSH"
+        case .sftp: return "SFTP"
+        case .localTerminal: return text("Local terminal", "本地终端")
+        case .localFiles: return text("Local files", "本地文件")
+        }
+    }
     func recentSubtitle(_ target: RecentTarget) -> String {
         switch target.kind {
         case .localTerminal: return text("Terminal", "终端")
-        case .localFiles: return "SFTP · " + text("Local", "本地")
+        case .localFiles: return text("Local file browser", "本地文件浏览")
         case .ssh, .sftp:
             guard let raw = RecentTargets.resolvedHost(target, workspace: workspace) else { return "" }
             let host = resolvedHost(raw)

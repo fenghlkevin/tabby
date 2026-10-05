@@ -86,6 +86,7 @@ enum ConnectionValidation {
         }
     }
     static func host(_ original: Host, workspace: Workspace, chinese: Bool = false) throws -> Host {
+        if let name = original.persistentSessionName, !name.isEmpty { _ = try PersistentSession.validatedName(name) }
         if original.groupInheritance?.authentication == true,
            let base = GroupDefaults.group(named: original.group, workspace: workspace), let id = base.credentialID,
            !workspace.credentials.contains(where: { $0.id == id }) {

@@ -19,6 +19,8 @@ struct Host: Codable, Identifiable, Hashable {
     var jumpHostID: UUID?
     /// Missing on legacy profiles: every setting remains a host override.
     var groupInheritance: HostGroupInheritance?
+    var persistentSession: Bool?
+    var persistentSessionName: String?
     var favorite = false
 }
 
@@ -65,6 +67,10 @@ struct Preferences: Codable, Equatable {
     var localDirectory = ""
     var localLoginShell = true
     var sshConnectTimeout = 30
+    var keywordRules: [KeywordRule] = []
+    var commandHistoryLimit = 1000
+    var commandHistoryExclusions = ""
+    var commandCompletionNotifications = false
 
     enum CodingKeys: String, CodingKey {
         case language, applicationIcon, fontName, fontSize, scrollback, copyOnSelect, rightClickPaste, trimPaste
@@ -72,6 +78,7 @@ struct Preferences: Codable, Equatable {
         case ansiColors, customTerminalThemes
         case cursorColor, terminalTheme, cursorShape, cursorBlink, optionAsMeta, backspaceControlH
         case mouseReporting, bellStyle, confirmMultilinePaste, middleClickPaste
+        case keywordRules, commandHistoryLimit, commandHistoryExclusions, commandCompletionNotifications
         case localShell, localDirectory, localLoginShell, sshConnectTimeout
     }
     init() {}
@@ -106,6 +113,10 @@ struct Preferences: Codable, Equatable {
         localShell = try v.decodeIfPresent(String.self, forKey: .localShell) ?? ""
         localDirectory = try v.decodeIfPresent(String.self, forKey: .localDirectory) ?? ""
         localLoginShell = try v.decodeIfPresent(Bool.self, forKey: .localLoginShell) ?? true
+        keywordRules = try v.decodeIfPresent([KeywordRule].self, forKey: .keywordRules) ?? []
+        commandHistoryLimit = try v.decodeIfPresent(Int.self, forKey: .commandHistoryLimit) ?? 1000
+        commandHistoryExclusions = try v.decodeIfPresent(String.self, forKey: .commandHistoryExclusions) ?? ""
+        commandCompletionNotifications = try v.decodeIfPresent(Bool.self, forKey: .commandCompletionNotifications) ?? false
         sshConnectTimeout = try v.decodeIfPresent(Int.self, forKey: .sshConnectTimeout) ?? 30
     }
 }
@@ -259,6 +270,8 @@ enum Secrets {
 
 @MainActor final class AppStore: ObservableObject {
     let monitoring = MonitoringCenter()
+    let externalEdits = ExternalEditCenter()
+    lazy var batchTasks = BatchTaskCenter(store: self)
     lazy var automaticBackup = AutomaticBackupCoordinator(store: self)
     @Published var workspace = Workspace()
     @Published var section = "hosts"

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Axon 开发与 UI 验收"
+  short_description: "统一 Axon 原生应用界面与操作，完成实际 UI 验收、验证和安全交付"
+  default_prompt: "使用 $axon-dev-delivery 开发本次 Axon 功能，并按当前系统风格完成界面与操作验收。"
+policy:
+  allow_implicit_invocation: true

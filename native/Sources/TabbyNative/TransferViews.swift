@@ -138,8 +138,9 @@ struct TransferRow: View {
             if job.state == "failed" || job.state == "cancelled" {
                 Button { queue.retry(job) } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(IconButtonStyle()).disabled(!job.retryAvailable)
-                    .help(job.retryReason.isEmpty ? store.text("Retry transfer", "重试传输") : job.retryReason)
+                    .help(job.retryReason.isEmpty ? store.text(job.partials.isEmpty ? "Retry transfer" : "Resume verified transfer", job.partials.isEmpty ? "重试传输" : "校验后续传") : job.retryReason)
                     .accessibilityLabel(store.text("Retry transfer", "重试传输"))
+                if !job.partials.isEmpty { Button(store.text("Restart", "重新传输")) { queue.restart(job) }.buttonStyle(ChromeButtonStyle()).help(store.text("Discard partial file and start again", "丢弃部分文件并重新传输")) }
             }
             if job.state == "running" || job.state == "queued" {
                 Button { queue.cancel(job) } label: { Image(systemName: "xmark") }

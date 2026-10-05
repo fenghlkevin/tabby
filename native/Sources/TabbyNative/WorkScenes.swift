@@ -6,6 +6,8 @@ struct WorkSceneTerminal: Codable, Identifiable, Equatable {
     var id = UUID()
     var hostID: UUID?
     var directory = ""
+    var persistentSession: Bool?
+    var persistentSessionName: String?
 }
 struct WorkSceneLocation: Codable, Identifiable, Equatable {
     var id = UUID()
@@ -32,6 +34,10 @@ struct WorkScene: Codable, Identifiable, Equatable {
         }
         let ids = terminals.map(\.id) + directories.map(\.id) + logFiles.map(\.id)
         guard Set(ids).count == ids.count, Set(forwardIDs).count == forwardIDs.count else { throw AppFailure.message("Duplicate scene items / 场景项目重复") }
+        for entry in terminals {
+            if entry.persistentSession == true, entry.hostID == nil { throw AppFailure.message("tmux requires a remote host / tmux 需要远端主机") }
+            if let name = entry.persistentSessionName, !name.isEmpty { _ = try PersistentSession.validatedName(name) }
+        }
         for hostID in terminals.compactMap(\.hostID) + directories.compactMap(\.hostID) + logFiles.compactMap(\.hostID) {
             guard workspace.hosts.contains(where: { $0.id == hostID }) else { throw AppFailure.message("A scene host is unavailable / 场景主机已不存在，请编辑场景") }
         }
@@ -113,7 +119,10 @@ struct WorkScene: Codable, Identifiable, Equatable {
         var created: [TerminalSession] = []
         for entry in entries {
             let host = entry.hostID.flatMap { id in workspace.hosts.first { $0.id == id } }
-            let session = TerminalSession(host: host, store: self); created.append(session)
+            let session = TerminalSession(host: host, store: self)
+            session.persistentOverride = entry.persistentSession
+            if entry.persistentSession == true { session.persistentNameOverride = entry.persistentSessionName?.isEmpty == false ? entry.persistentSessionName : PersistentSession.defaultName(entry.id) }
+            created.append(session)
         }
         let runtime = OpenWorkScene(definition: scene, sessionIDs: created.map(\.id), store: self)
         sessions += created; openScenes.append(runtime)
@@ -132,7 +141,7 @@ struct WorkScene: Codable, Identifiable, Equatable {
                     if !session.connectionInProgress, !session.connected { break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-                if session.connected, let command = try? TerminalDirectoryBridge.safeChangeDirectoryCommand(path: entry.directory) {
+                if session.connected, !session.usesPersistentSession || session.persistentSessionWasCreated, let command = try? TerminalDirectoryBridge.safeChangeDirectoryCommand(path: entry.directory) {
                     let bytes = try? SnippetInput.bytes(command, action: .run, bracketedPaste: session.terminal?.terminalStateSnapshot().bracketedPasteMode ?? false, chinese: self.chinese)
                     if let bytes { session.terminal?.send(data: bytes[...]) }
                 }
@@ -171,7 +180,7 @@ struct WorkScene: Codable, Identifiable, Equatable {
         let candidates = owner.map { runtime in sessions.filter { runtime.sessionIDs.contains($0.id) } } ?? standaloneSessions
         let source = candidates.filter { session in session.host == nil || workspace.hosts.contains(where: { $0.id == session.host?.id }) }
         scene.terminals = source.map { session in
-            WorkSceneTerminal(hostID: session.host?.id, directory: session.currentDirectory ?? "")
+            WorkSceneTerminal(hostID: session.host?.id, directory: session.currentDirectory ?? "", persistentSession: session.persistentOverride, persistentSessionName: session.usesPersistentSession ? session.persistentName : nil)
         }
         if sceneWindowID != nil || owner == nil {
             let openedDirectories = source.flatMap { session -> [WorkSceneLocation] in
@@ -303,6 +312,8 @@ struct WorkSceneEditor: View {
                                 }.buttonStyle(IconButtonStyle())
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 5) { Text(store.text("Connect to", "连接到")).font(.caption).foregroundStyle(Palette.muted); hostPicker($item.hostID).frame(height: 38) }
+                                    Toggle(store.text("tmux persistence", "tmux 持久会话"), isOn: Binding(get: { item.persistentSession ?? false }, set: { item.persistentSession = $0 })).disabled(item.hostID == nil)
+                                    if item.persistentSession == true { TextField(store.text("Session name · optional", "会话名称 · 可选"), text: Binding(get: { item.persistentSessionName ?? "" }, set: { item.persistentSessionName = $0 })).appInput() }
                                     VStack(alignment: .leading, spacing: 5) { Text(store.text("Initial directory · optional", "初始目录 · 可选")).font(.caption).foregroundStyle(Palette.muted); TextField("/var/www/app", text: $item.directory).appInput() }
                                 }
                             }.padding(12).background(Palette.field.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8))

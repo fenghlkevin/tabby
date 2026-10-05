@@ -371,3 +371,31 @@ struct FileToolbarButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
+
+/// Each workspace follows its own window, including full-screen changes.
+struct WindowFullscreenProbe: NSViewRepresentable {
+    @Binding var isFullscreen: Bool
+    func makeNSView(context: Context) -> FullscreenProbeView { FullscreenProbeView() }
+    func updateNSView(_ view: FullscreenProbeView, context: Context) {
+        view.changed = { isFullscreen = $0 }
+    }
+}
+final class FullscreenProbeView: NSView {
+    var changed: (Bool) -> Void = { _ in }
+    private var observations: [NSObjectProtocol] = []
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observations.forEach { NotificationCenter.default.removeObserver($0) }; observations = []
+        guard let window else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.window === window else { return }
+            self.changed(window.styleMask.contains(.fullScreen))
+        }
+        for (name, state) in [(NSWindow.didEnterFullScreenNotification, true), (NSWindow.didExitFullScreenNotification, false)] {
+            observations.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.changed(state) }
+            })
+        }
+    }
+    deinit { observations.forEach { NotificationCenter.default.removeObserver($0) } }
+}

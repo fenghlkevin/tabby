@@ -582,7 +582,9 @@ final class FileAppearanceTests: XCTestCase {
         let entries: [FileEntry]
         init(_ entries: [FileEntry]) { self.entries = entries }
         func list(_ path: String) -> [FileEntry] { entries }
-        func stat(_ path: String) throws -> FileEntry { throw FileMissing(path) }
+        func stat(_ path: String) throws -> FileEntry {
+            guard let entry = entries.first(where: { $0.path == path }) else { throw FileMissing(path) }; return entry
+        }
         func mkdir(_ path: String) {}
         func rename(_ from: String, _ to: String) {}
         func delete(_ entry: FileEntry) {}

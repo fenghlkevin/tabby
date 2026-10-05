@@ -173,12 +173,12 @@ final class MainWindowLifecycleTests: XCTestCase {
         for child in view.subviews { if let field = findTextField(child) { return field } }
         return nil
     }
-    @MainActor private func waitUntil(_ condition: () -> Bool) async throws {
+    @MainActor private func waitUntil(line: UInt = #line, _ condition: () -> Bool) async throws {
         for _ in 0..<250 {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(20))
         }
-        XCTFail("Main-window lifecycle transition timed out")
+        XCTFail("Main-window lifecycle transition timed out at caller \(line)")
     }
 }
 

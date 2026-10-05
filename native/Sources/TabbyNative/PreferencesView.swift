@@ -2,13 +2,14 @@ import SwiftUI
 import AppKit
 
 enum PreferencesPage: String, CaseIterable, Identifiable {
-    case general, terminal, appearance, keyboard, connection, importHosts, storage, shortcuts, about
+    case general, terminal, appearance, keywords, keyboard, connection, importHosts, storage, shortcuts, about
     var id: String { rawValue }
     var icon: String {
-        switch self { case .general: return "gearshape"; case .terminal: return "terminal"; case .appearance: return "paintpalette"; case .keyboard: return "keyboard"; case .connection: return "network"; case .importHosts: return "arrow.up.arrow.down"; case .storage: return "externaldrive.badge.icloud"; case .shortcuts: return "command"; case .about: return "info.circle" }
+        switch self { case .keywords: return "textformat.abc"; case .general: return "gearshape"; case .terminal: return "terminal"; case .appearance: return "paintpalette"; case .keyboard: return "keyboard"; case .connection: return "network"; case .importHosts: return "arrow.up.arrow.down"; case .storage: return "externaldrive.badge.icloud"; case .shortcuts: return "command"; case .about: return "info.circle" }
     }
     func title(chinese: Bool) -> String {
         switch self {
+        case .keywords: return chinese ? "关键词规则" : "Keyword rules"
         case .general: return chinese ? "通用" : "General"
         case .terminal: return chinese ? "终端" : "Terminal"
         case .appearance: return chinese ? "终端配色" : "Terminal colors"
@@ -92,6 +93,7 @@ struct PreferencesView: View {
     }
     private var subtitle: String {
         switch page {
+        case .keywords: return store.text("Configurable terminal text highlighting.", "可配置的终端关键词高亮。")
         case .general: return store.text("Application icon, language and local terminal startup.", "程序图标、语言与本地终端启动方式。")
         case .terminal: return store.text("Font, history and cursor behavior.", "字体、历史回滚与光标行为。")
         case .appearance: return store.text("Choose a scheme or create your own complete terminal palette.", "选择主题方案，或创建自己的完整终端配色。")
@@ -105,6 +107,7 @@ struct PreferencesView: View {
     }
     @ViewBuilder private func pageContent(scrollToSection: @escaping (String) -> Void) -> some View {
         switch page {
+        case .keywords: KeywordRulesPane(draft: $draft)
         case .general: general
         case .terminal: terminal
         case .appearance: TerminalColorPreferencesView(draft: $draft, chinese: store.chinese, scrollToSection: scrollToSection, commit: saveTerminalColors)
@@ -133,7 +136,12 @@ struct PreferencesView: View {
         }
     }
     private var terminal: some View {
+        VStack(alignment: .leading, spacing: 16) {
         TerminalPreferencesPane(draft: $draft, scrollbackValid: $scrollbackValid, fontSizeValid: $fontSizeValid, chinese: store.chinese, fontSizeInput: $fontSizeInput)
+        Stepper(store.text("History entries: \(draft.commandHistoryLimit)", "历史保留数：\(draft.commandHistoryLimit)"), value: $draft.commandHistoryLimit, in: 100...50000, step: 100)
+        Toggle(store.text("Notify when commands finish after 10 seconds", "命令运行超过 10 秒，完成后通知"), isOn: $draft.commandCompletionNotifications)
+        TextField(store.text("Exclude commands containing these terms (one per line)", "排除包含以下内容的命令（每行一项）"), text: $draft.commandHistoryExclusions, axis: .vertical).appInput()
+        }
     }
     private var keyboard: some View {
         VStack(alignment: .leading, spacing: 18) {

@@ -55,6 +55,10 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     }
     var commandHistoryStore: CommandHistoryStore?
     var commandHistoryToken = ""
+    var activeCommandHistoryID: UUID?
+    var persistentOverride: Bool?
+    var persistentNameOverride: String?
+    var persistentSessionWasCreated = false
     @Published var commandHistoryReady = false
     @Published var commandHistoryRecording = true
     var pendingDirectoryInsertion: (command: String, host: Host?)?
@@ -133,6 +137,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         }
         TerminalAppearance.apply(pref, to: view)
         terminal = view
+        KeywordOverlay.attach(to: view, store: store, sessionID: id)
         if let local = view as? LocalProcessTerminalView {
             localProcessGeneration = generation
             let launch = LocalTerminalLaunch(preferences: pref)
@@ -272,24 +277,31 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
                     connection = next
                 }
                 guard let connection else { return }
+                if usesPersistentSession { try await preparePersistentSession(connection) }
                 client = connection; status = store.text("Opening terminal…", "正在打开终端…")
                 try await connection.withPTY(.init(wantReply: true, term: "xterm-256color", terminalCharacterWidth: 100, terminalRowHeight: 30, terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { output, input in
                     guard request == generation, !Task.isCancelled else { throw CancellationError() }
                     writer = input;
-                    let bootstrap = automaticCommandHistoryScript()
-                    commandHistoryStartupTask = Task { [weak self] in
-                        try? await Task.sleep(for: .milliseconds(150))
-                        guard let self, self.generation == request, !Task.isCancelled else { return }
-                        self.beginCommandHistoryBootstrapScreen()
-                        do {
-                            for line in bootstrap.components(separatedBy: "\n") {
-                                try Task.checkCancellation()
-                                try await input.write(ByteBuffer(string: line + "\r"))
-                                try await Task.sleep(for: .milliseconds(15))
-                            }
-                            try await Task.sleep(for: .seconds(2))
-                            if self.generation == request { self.endCommandHistoryBootstrapScreen() }
-                        } catch { self.endCommandHistoryBootstrapScreen() }
+                    let bootstrap = usesPersistentSession ? "" : automaticCommandHistoryScript()
+                    if self.usesPersistentSession { try await input.write(ByteBuffer(string: PersistentSession.attach(name: self.persistentName))) }
+                    else {
+                        commandHistoryStartupTask = Task { [weak self] in
+                            try? await Task.sleep(for: .milliseconds(150))
+                            guard let self, self.generation == request, !Task.isCancelled else { return }
+                            self.beginCommandHistoryBootstrapScreen()
+                            do {
+                                for line in bootstrap.components(separatedBy: "\n") {
+                                    try Task.checkCancellation()
+                                    try await input.write(ByteBuffer(string: line + "\r"))
+                                    try await Task.sleep(for: .milliseconds(2))
+                                }
+                                for _ in 0..<20 {
+                                    if self.commandHistoryReady { break }
+                                    try await Task.sleep(for: .milliseconds(100))
+                                }
+                                if self.generation == request { self.endCommandHistoryBootstrapScreen() }
+                            } catch { self.endCommandHistoryBootstrapScreen() }
+                        }
                     }
                     connected = true; connectionInProgress = false; status = store.text("Connected", "已连接")
                     store.record("ssh", "connected", host: host.name)
@@ -351,7 +363,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         currentDirectory = nil
         authenticationWindow?.cancel()
         if connected, let host { store.record("ssh", "disconnected", host: host.name) }
-        commandHistoryToken = ""; commandHistoryReady = false
+        commandHistoryToken = ""; commandHistoryReady = false; activeCommandHistoryID = nil
         inputTask?.cancel(); inputTask = nil
         commandHistoryStartupTask?.cancel(); commandHistoryStartupTask = nil
         endCommandHistoryBootstrapScreen()
@@ -389,9 +401,10 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     }
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let bytes = ByteBuffer(bytes: data)
-        let previous = inputTask; let input = writer; let request = generation
+        let previous = inputTask; let startup = commandHistoryStartupTask; let input = writer; let request = generation
         inputTask = Task {
             await previous?.value
+            await startup?.value
             guard !Task.isCancelled, request == generation else { return }
             do { try await input?.write(bytes) }
             catch { if request == generation { status = error.localizedDescription } }

@@ -4,11 +4,27 @@ import SwiftTerm
 @testable import TabbyNative
 
 final class RecentTargetsTests: XCTestCase {
+    @MainActor func testRecentTypeLabelsDistinguishProtocolsAndLocalFiles() {
+        let store = AppStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("workspace.json"))
+        XCTAssertEqual(store.recentTypeTitle(RecentTarget(kind: .ssh)), "SSH")
+        XCTAssertEqual(store.recentTypeTitle(RecentTarget(kind: .sftp)), "SFTP")
+        XCTAssertFalse(store.recentTypeTitle(RecentTarget(kind: .localFiles)).contains("SFTP"))
+        XCTAssertFalse(store.recentSubtitle(RecentTarget(kind: .localFiles)).contains("SFTP"))
+    }
+    func testFileRecentsCannotEvictSSHHistory() {
+        let workspace = Workspace()
+        let now = Date()
+        let ssh = RecentTarget(kind: .ssh, username: "root", address: "ssh.example.com", port: 22, lastOpened: now.addingTimeInterval(-100))
+        let files = (0..<8).map { RecentTarget(kind: .sftp, username: "root", address: "file\($0).example.com", port: 22, lastOpened: now.addingTimeInterval(-Double($0))) }
+        let pruned = RecentTargets.pruned(files + [ssh], workspace: workspace, now: now)
+        XCTAssertTrue(pruned.contains { $0.id == ssh.id })
+        XCTAssertEqual(pruned.filter { $0.kind.isFiles }.count, 5)
+    }
     private func quick(_ address: String, username: String = "root") -> TabbyNative.Host {
         var host = TabbyNative.Host(); host.address = address; host.name = address; host.username = username
         return host
     }
-    func testSevenDayBoundaryDeduplicationAndGlobalFiveTargetLimit() throws {
+    func testSevenDayBoundaryDeduplicationAndIndependentTypeLimits() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000), workspace = Workspace()
         let fresh = RecentTarget(kind: .ssh, username: "root", address: "EXAMPLE.INVALID", port: 22, lastOpened: now)
         var duplicate = fresh; duplicate.address = "example.invalid"; duplicate.lastOpened = now.addingTimeInterval(-10)
@@ -19,7 +35,7 @@ final class RecentTargetsTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.id), [fresh.id, boundary.id])
         XCTAssertEqual(filtered.first?.lastOpened, now)
         let many = (0..<8).map { RecentTarget(kind: $0.isMultiple(of: 2) ? .ssh : .sftp, username: "root", address: "host\($0).invalid", port: 22, lastOpened: now.addingTimeInterval(Double(-$0))) }
-        XCTAssertEqual(RecentTargets.pruned(Array(many.reversed()), workspace: workspace, now: now).map(\.id), Array(many.prefix(5)).map(\.id))
+        XCTAssertEqual(RecentTargets.pruned(Array(many.reversed()), workspace: workspace, now: now).map(\.id), many.map(\.id))
         XCTAssertNotEqual(RecentTarget(kind: .localTerminal).id, RecentTarget(kind: .localFiles).id)
         XCTAssertNotEqual(fresh.id, RecentTarget(kind: .sftp, username: "root", address: "example.invalid", port: 22).id)
     }

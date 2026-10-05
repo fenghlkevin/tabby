@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Loopback-only SSH/SFTP fixture. Stores data only under a fresh temp directory."""
-import base64, json, os, socket, threading, tempfile, subprocess, sys, time
+import base64, json, os, socket, threading, tempfile, subprocess, sys, time, signal
 import paramiko
 root = tempfile.mkdtemp(prefix='tabby-native-sftp-')
 key = paramiko.ECDSAKey.generate()
@@ -93,9 +93,28 @@ class Server(paramiko.ServerInterface):
                     channel.sendall(sample); channel.send_exit_status(0); channel.close()
                 except Exception: pass  # Cancellation closes only this exec channel.
             else:
-                out = subprocess.run(command, shell=True, cwd=root, capture_output=True)
-                try:
-                    channel.sendall(out.stdout); channel.sendall_stderr(out.stderr); channel.send_exit_status(out.returncode); channel.close()
+                process = subprocess.Popen(command, shell=True, cwd=root, stdin=subprocess.DEVNULL,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                def pump(stream, send):
+                    while True:
+                        block = stream.read1(32768)
+                        if not block: break
+                        try: send(block)
+                        except Exception: pass
+                def disconnected():
+                    while process.poll() is None:
+                        if channel.closed:
+                            try: os.killpg(process.pid, signal.SIGHUP)
+                            except ProcessLookupError: pass
+                            return
+                        time.sleep(0.05)
+                output_threads = [threading.Thread(target=pump, args=(process.stdout, channel.sendall)),
+                                  threading.Thread(target=pump, args=(process.stderr, channel.sendall_stderr))]
+                for thread in output_threads: thread.start()
+                threading.Thread(target=disconnected, daemon=True).start()
+                status = process.wait()
+                for thread in output_threads: thread.join()
+                try: channel.send_exit_status(status); channel.close()
                 except Exception: pass
         threading.Thread(target=run, daemon=True).start(); return True
 

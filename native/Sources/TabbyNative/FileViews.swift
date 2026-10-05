@@ -16,8 +16,12 @@ struct FilesView: View {
                     else if let pane = model.remote { FilePaneView(pane: pane, model: model, remote: true) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            ExternalEditTasksBar(center: store.externalEdits) { model.showExternalEdits = true }
             TransferQueuePanel(queue: model.queue)
         }.background(Palette.background).task(id: store.terminalFileRequest?.id) { await model.open() }
+            .sheet(isPresented: $model.showExternalEdits) {
+                ExternalEditSheet(center: store.externalEdits) { model.showExternalEdits = false }.environmentObject(store)
+            }
             .sheet(item: $comparison) { DirectoryComparisonSheet(model: $0).environmentObject(store) }
     }
     private func compareDirectories() {
@@ -219,6 +223,9 @@ struct FilePaneView: View {
         if !entry.directory && !entry.symlink {
             actions.append(FileTableAction(title: store.text("Follow log", "跟踪日志"), enabled: selected.count == 1,
                 action: { store.openLogViewer(pane: pane, entry: entry, host: endpointIsRemote ? model.rightHost : nil) }))
+            actions.append(FileTableAction(title: store.text("Edit externally…", "使用外部编辑器…"), enabled: selected.count == 1, action: {
+                Task { do { try await store.externalEdits.open(entry: entry, pane: pane, host: pane === model.remote && !model.rightIsLocal ? model.rightHost : nil, username: pane === model.remote ? model.rightAuthenticatedUsername : nil); model.showExternalEdits = true } catch { store.error = error.localizedDescription; model.showExternalEdits = true } }
+            }))
             actions.append(FileTableAction(title: store.text("Edit text", "编辑文本"), action: { pane.busy = true; editingFile = entry }))
         }
         actions.append(FileTableAction(title: store.text("Rename", "重命名"), enabled: selected.count == 1, action: { rename(entry) }))
@@ -311,6 +318,19 @@ struct SFTPHostPicker: View {
     @FocusState private var searchFocused: Bool
     var hosts: [Host] { store.workspace.hosts.filter { (group.isEmpty || $0.group == group) && (search.isEmpty || "\($0.name) \($0.address) \($0.group) \($0.tags)".localizedCaseInsensitiveContains(search)) } }
     var body: some View {
+        if model.opening {
+            VStack(spacing: 18) {
+                IconTile(symbol: "server.rack", color: Palette.sftp, size: 48)
+                Text(model.rightHost.map { $0.name.isEmpty ? $0.address : $0.name } ?? store.text("Remote host", "远程主机"))
+                    .font(.system(size: 17, weight: .semibold)).multilineTextAlignment(.center)
+                if let host = model.rightHost {
+                    Text(RecentTargets.effectiveUsername(host, workspace: store.workspace) + "@" + host.address)
+                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                }
+                ProgressView().controlSize(.small)
+                Text(store.text("Connecting to SFTP…", "正在连接 SFTP…")).font(.system(size: 12)).foregroundStyle(Palette.muted)
+            }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity).background(Palette.sidebar)
+        } else {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 SFTPHostPickerBackButton(title: store.text("Select host", "选择主机"),
@@ -353,6 +373,7 @@ struct SFTPHostPicker: View {
                 }.padding(.horizontal, 20)
             }
         }.foregroundStyle(Palette.text).background(Palette.sidebar).onAppear { searchFocused = true }
+        }
     }
 }
 
@@ -360,4 +381,20 @@ struct DisconnectedFilesWorkspace: View {
     @StateObject private var model: FileManagerModel
     init(store: AppStore) { _model = StateObject(wrappedValue: FileManagerModel(session: TerminalSession(host: nil, store: store))) }
     var body: some View { FilesView(model: model).onDisappear { model.close() } }
+}
+
+struct ExternalEditTasksBar: View {
+    @EnvironmentObject var store: AppStore
+    @ObservedObject var center: ExternalEditCenter
+    let open: () -> Void
+    var body: some View {
+        if !center.edits.isEmpty {
+            HStack {
+                Label(store.text("External editing", "外部编辑任务"), systemImage: "square.and.pencil")
+                Text("\(center.edits.count)").foregroundStyle(Palette.muted)
+                Spacer()
+                Button(store.text("Review and upload…", "查看与回传…"), action: open).buttonStyle(ChromeButtonStyle())
+            }.padding(12).background(Palette.card)
+        }
+    }
 }

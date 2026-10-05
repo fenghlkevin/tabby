@@ -475,6 +475,7 @@ struct SnippetTerminalPanel: View {
 
 struct SnippetTextEditor: NSViewRepresentable {
     @Binding var text: String
+    @Environment(\.isEnabled) private var enabled
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false; scroll.drawsBackground = false
@@ -493,7 +494,10 @@ struct SnippetTextEditor: NSViewRepresentable {
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        if let editor = scroll.documentView as? NSTextView, editor.string != text { editor.string = text }
+        if let editor = scroll.documentView as? NSTextView {
+            editor.isEditable = enabled
+            if editor.string != text { editor.string = text }
+        }
     }
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: SnippetTextEditor

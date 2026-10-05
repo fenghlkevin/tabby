@@ -27,6 +27,7 @@ struct WorkspaceNavigation: View {
                         item("credentials", symbol: "key.fill", title: store.text("Keychain", "凭据库"))
                         item("forwards", symbol: "arrow.left.arrow.right", title: store.text("Port forwarding", "端口转发"))
                         item("snippets", symbol: "curlybraces", title: store.text("Snippets", "代码片段"))
+                        item("batchTasks", symbol: "list.bullet.rectangle", title: store.text("Batch tasks", "批量任务"))
                         item("scenes", symbol: "rectangle.3.group", title: store.text("Work scenes", "工作场景"))
                         item("known", symbol: "checkmark.shield", title: store.text("Known hosts", "已知主机"))
                         item("logs", symbol: "clock.arrow.circlepath", title: store.text("Logs", "日志"))

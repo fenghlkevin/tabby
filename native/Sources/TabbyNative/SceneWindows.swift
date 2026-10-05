@@ -113,7 +113,7 @@ enum SceneWorkspaceMerge {
     required init?(coder: NSCoder) { fatalError("Unsupported") }
     func windowWillClose(_ notification: Notification) {
         guard !cleaned else { return }; cleaned = true
-        openingTabs?.cancel(); changes?.cancel(); store.closeScene(sceneID); store.monitoring.stop(); store.automaticBackup.cancel()
+        openingTabs?.cancel(); changes?.cancel(); store.closeScene(sceneID); store.batchTasks.cancelAll(); store.externalEdits.edits.forEach { $0.stop() }; store.monitoring.stop(); store.automaticBackup.cancel()
         for id in Array(store.forwardTasks.keys) { store.stopForward(id) }
         for session in Array(store.sessions) { store.close(session.id) }
         for log in Array(store.logViewers) { store.closeLogViewer(log.id) }

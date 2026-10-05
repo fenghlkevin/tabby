@@ -4,9 +4,45 @@ import XCTest
 @testable import TabbyNative
 
 @MainActor final class BackupPasswordPreferencesTests: XCTestCase {
+    func testS3FieldsAndSecretAutoSaveAndReloadWithoutPressingSave() async throws {
+        _ = NSApplication.shared
+        let fixture = makeStore()
+        var cloud = CloudConnectionSettings(s3: S3BackupConfiguration(endpoint: "https://before.example.invalid", bucket: "fixture", accessKeyID: "fixture-ak"))
+        defer { try? Secrets.save("", id: cloud.id); try? FileManager.default.removeItem(at: fixture.directory) }
+        try CloudConnectionPersistence.save(cloud, secret: "before-secret", workspaceURL: fixture.store.fileURL)
+        let hosting = NSHostingView(rootView: ScrollView { CloudBackupPreferencesPane().padding(24) }.environmentObject(fixture.store).preferredColorScheme(.light))
+        let window = show(hosting); defer { window.close() }
+        try await settle(hosting)
+        let endpoint = try XCTUnwrap(find(NSTextField.self, in: hosting).first { $0.stringValue == "https://before.example.invalid" })
+        XCTAssertTrue(window.makeFirstResponder(endpoint)); endpoint.selectText(nil)
+        let editor = try XCTUnwrap(endpoint.currentEditor() as? NSTextView)
+        editor.insertText("https://after.example.invalid", replacementRange: editor.selectedRange())
+        let secret = try secureField("axon-cloud-secret", in: hosting)
+        try edit(secret, replacingWith: "after-secret", in: window)
+        try await Task.sleep(for: .milliseconds(600)); try await settle(hosting)
+        cloud = try CloudConnectionPersistence.load(workspaceURL: fixture.store.fileURL)
+        XCTAssertEqual(cloud.s3.endpoint, "https://after.example.invalid")
+        XCTAssertEqual(try Secrets.readChecked(cloud.id), "after-secret")
+        window.close()
+        let reopened = NSHostingView(rootView: ScrollView { CloudBackupPreferencesPane().padding(24) }.environmentObject(fixture.store).preferredColorScheme(.light))
+        let second = show(reopened); defer { second.close() }; try await settle(reopened)
+        XCTAssertNotNil(find(NSTextField.self, in: reopened).first { $0.stringValue == "https://after.example.invalid" })
+        XCTAssertEqual(try secureField("axon-cloud-secret", in: reopened).stringValue, "after-secret")
+    }
+    func testBackupCatalogShowsNamesAndDoesNotRestoreWithoutSelection() async throws {
+        _ = NSApplication.shared
+        let fixture = makeStore(); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var restores = 0
+        let entries = [BackupCatalogEntry(key: "Axon/中文.axonbackup", size: 1024, modified: Date()), BackupCatalogEntry(key: "Axon/previous.axonbackup", size: 2048, modified: Date().addingTimeInterval(-60))]
+        let hosting = NSHostingView(rootView: BackupCatalogView(entries: entries, source: "fixture-bucket", restore: { _ in restores += 1 }, cancel: {}).environmentObject(fixture.store).preferredColorScheme(.light))
+        let window = show(hosting, size: NSSize(width: 660, height: 460)); defer { window.close() }; try await settle(hosting)
+        XCTAssertEqual(restores, 0)
+        let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)); hosting.cacheDisplay(in: hosting.bounds, to: image)
+        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/private/tmp/axon-backup-catalog-preview.png"))
+    }
     func testCloudFolderSaveFollowsEveryPasswordEditIncludingClearingAndFocusLoss() async throws {
         _ = NSApplication.shared
-        let fixture = makeStore(); defer { fixture.store.monitoring.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+        let fixture = makeStore(); defer { fixture.store.monitoring.stop(); if let cloud = try? CloudConnectionPersistence.load(workspaceURL: fixture.store.fileURL) { try? Secrets.save("", id: cloud.id) }; try? FileManager.default.removeItem(at: fixture.directory) }
         let hosting = NSHostingView(rootView: ScrollView { CloudBackupPreferencesPane().padding(24) }
             .environmentObject(fixture.store).preferredColorScheme(.light))
         let window = show(hosting); defer { window.close() }
@@ -22,7 +58,7 @@ import XCTest
 
     func testS3UploadRequiresCurrentPasswordAndClearingSecretDisablesAllConnectionActions() async throws {
         _ = NSApplication.shared
-        let fixture = makeStore(); defer { fixture.store.monitoring.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+        let fixture = makeStore(); defer { fixture.store.monitoring.stop(); if let cloud = try? CloudConnectionPersistence.load(workspaceURL: fixture.store.fileURL) { try? Secrets.save("", id: cloud.id) }; try? FileManager.default.removeItem(at: fixture.directory) }
         let hosting = NSHostingView(rootView: ScrollView { CloudBackupPreferencesPane().padding(24) }
             .environmentObject(fixture.store).preferredColorScheme(.light))
         let window = show(hosting); defer { window.close() }
@@ -30,7 +66,7 @@ import XCTest
 
         let password = try secureField("axon-cloud-password", in: hosting)
         let secret = try secureField("axon-cloud-secret", in: hosting)
-        for identifier in ["axon-cloud-save", "axon-cloud-upload", "axon-cloud-download"] {
+        for identifier in ["axon-cloud-upload", "axon-cloud-download"] {
             try assertEnabled(false, identifier: identifier, in: hosting)
         }
         try edit(secret, replacingWith: "fixture-secret", in: window)
@@ -46,19 +82,20 @@ import XCTest
         try edit(secret, replacingWith: "", in: window)
         try await settle(hosting)
         XCTAssertEqual(secret.stringValue, "")
-        for identifier in ["axon-cloud-save", "axon-cloud-upload", "axon-cloud-download"] {
+        for identifier in ["axon-cloud-upload", "axon-cloud-download"] {
             try assertEnabled(false, identifier: identifier, in: hosting)
         }
-        // Enabled actions are never pressed: editing does not upload, download,
-        // or persist the fixture Secret Access Key in Keychain.
+        try assertEnabled(true, identifier: "axon-cloud-save", in: hosting)
+        // Editing saves configuration locally, but never transfers a backup.
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.store.fileURL.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: CloudConnectionPersistence.url(workspaceURL: fixture.store.fileURL).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: CloudConnectionPersistence.url(workspaceURL: fixture.store.fileURL).path))
+
     }
 
     func testLocalEncryptedBackupSaveFollowsPasswordEditsAndEncryptionToggle() async throws {
         _ = NSApplication.shared
         let restoreAccessibility = enableAccessibility(); defer { restoreAccessibility() }
-        let fixture = makeStore(); defer { fixture.store.monitoring.stop(); try? FileManager.default.removeItem(at: fixture.directory) }
+        let fixture = makeStore(); defer { fixture.store.monitoring.stop(); if let cloud = try? CloudConnectionPersistence.load(workspaceURL: fixture.store.fileURL) { try? Secrets.save("", id: cloud.id) }; try? FileManager.default.removeItem(at: fixture.directory) }
         let hosting = NSHostingView(rootView: ScrollView { ImportPreferencesPane().padding(24) }
             .environmentObject(fixture.store).preferredColorScheme(.light))
         let window = show(hosting); defer { window.close() }

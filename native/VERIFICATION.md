@@ -652,3 +652,144 @@
 - Removed the bootstrap alphaValue 0→1 transition. A non-interactive NSImageView holds a bitmap of the current normal terminal surface over the initialization buffer, preserving the terminal view opacity and dimensions. Restoring the normal buffer retains this cover for one render interval before removing it. Local and SSH bootstrap share this behavior.
 - Eight CommandHistoryTests passed. Added a real TerminalView test that verifies the cover contains a captured image, does not intercept pointer input, terminal visibility/alpha remain unchanged, the normal login text survives and initialization output does not enter the normal buffer. Existing actual local Bash PTY automatic recording plus Bash/Zsh hook tests pass. Evidence: /private/tmp/axon-0.8.23-tests.log. No live remote SSH or manual pointer/video verification was performed for this change.
 - Release and ZIP verification passed. Installed /Applications/Axon.app 0.8.23 (72); backup /private/tmp/Axon-before-0.8.23.app. Current app process/connections preserved, user configuration untouched. Install evidence: /private/tmp/axon-0.8.23-install-result.json.
+
+## 0.9.0 文件编辑、规则、Shell、持久会话与批量任务
+
+日期：2026-10-05。本机 Apple Silicon / Xcode 27 / Swift 6.4。
+
+- 新增 16 个回归：外部编辑精确回传／权限／保留原件／同长度并发修改拒绝，普通文件及大小限制，部分传输前缀校验与篡改拒绝，规则范围／Unicode／正则限时，旧配置默认值，Bash/Zsh 实际退出状态与目录报告，界面截图和原始终端缓冲保持。
+- 实际本机 SSH/SFTP 测试通过：四目标并发限制为 2，标准输出和标准错误、退出码 7、按原命令重试、GNU timeout 超时返回 124；取消会终止远端监督进程，后续写入不会执行。
+- 使用本机 tmux 3.7c 验证：任务在 SSH 断开后继续执行；重连识别原受管会话；非 Axon 会话拒绝接管。修正 tmux 选项目标语法后通过。没有访问真实业务主机。
+- TextStack 源码和本机已安装版本为 1.18.0，支持通过应用文件打开入口接收工作副本；未修改 TextStack 工程。
+- 全量 495 项回归中 494 项通过；发现 Shell 初始化输入交错问题后，缩短注入并在 SSH 输入时等待初始化完成。修复后主窗口、命令历史、新功能与实际 SSH/SFTP 共 28 项专项复测全部通过，0 失败、0 跳过。配置归档增加新字段兼容，导航测试覆盖新增入口，拖放测试端点实现真实元数据返回；对应全量测试已通过。
+- UI 渲染截图检查：关键词装饰对齐中文与英文字符，保留复制原文；批量任务页和规则设置页正常布局。规则色与终端配色独立，不改写原终端缓冲。
+- 持久会话依赖服务端 tmux 3.3+ 与 Bash，批量执行依赖 GNU timeout／gtimeout；不自动安装远端依赖。暂存续传队列和批量结果仅本次运行有效，外部编辑工作副本始终保留。
+- Release 0.9.0 / build 73 构建成功；本机 Apple Development 签名，`codesign --verify --deep --strict` 与 ZIP 解压完整性检查通过。已安装至 `/Applications/Axon.app`，可执行文件 SHA256 与发布产物一致。旧版备份位于 `native/dist/backups/Axon-0.8.23-before-0.9.0.app`。
+- 更新保留原 Axon 进程（PID 17627）与现有连接；原进程继续运行旧版，退出重开才加载新功能。此次没有强制重启用户应用。
+- 一次性测试服务器与失败测试遗留 tmux 会话已停止清理。测试仅使用临时配置与测试认证。
+
+## 0.9.1 云备份历史与选择恢复
+
+日期：2026-10-05。80 项备份相关测试全部通过，0 失败、0 跳过；新增 8 项覆盖：ListObjectsV2 签名与分页、URL 编码的中文路径及分页令牌、不在选择前下载、畸形响应与重复令牌拒绝、唯一文件名与本地列表过滤、配置与钥匙串重载、真实界面字段编辑后无需点击保存即可回填、目录与 S3 连续备份保留两份，以及独占发布不覆盖已有文件。恢复列表截图已检查，展示文件名、时间、大小和搜索框，未选择时禁用恢复。
+
+新文件策略由 cloud-backup.json 保存，手动与自动备份共用。新文件名包括 UTC 时间与完整 UUID，发布及 S3 上传拒绝覆盖。旧配置默认使用原策略。连接元数据即时保存，SK 防抖保存到钥匙串；仅查看页面不写入默认配置，钥匙串读取失败不丢失连接字段。测试只访问临时文件、一次性测试钥匙串项和本机注入的 S3 响应，未访问用户真实 S3 空间。
+
+- Release 0.9.1 / build 74 已构建、签名并安装至 /Applications/Axon.app；codesign 严格校验和 ZIP 解压校验通过。安装二进制与产物 SHA256 均为 145ed0bd8c5e25436cb54e6abbcd8e6ce3ee05b3a00b5c9fdcf8f2d805212463。旧版备份位于 native/dist/backups/Axon-0.9.0-before-0.9.1.app。保留现有进程与连接，退出重开后使用新版。
+
+### 0.9.2 — navigation and editing UI
+- Keyword rule cards use native color selection, optional background color and collapsible preview input. Required pattern is marked; new empty drafts do not immediately show red errors.
+- Batch tasks keep the workspace sidebar and use responsive target/command panels. Navigation regression now exercises the batchTasks route at both window widths.
+- External editing defaults to the system file association and supports choosing an application. Removed the TextStack sidebar item; tracked edits are opened within SFTP.
+- Targeted UI/file/operation tests: 28 executed, 1 skipped, 0 failures. Rendered keyword/batch screens inspected. Release 0.9.2 build 75 packaged and installed without stopping the existing Axon process; strict signatures and archive integrity checked.
+
+### 0.9.3 — recent target labels
+- Recent rows show a colored SSH/SFTP badge next to the host name. Local file browsing is labelled separately instead of SFTP.
+- RecentTargetsTests: 13 executed, 1 skipped, 0 failures; covers protocol labels and existing reopen routing.
+- Release 0.9.3 build 76 packaged, strict signature/archive integrity verified and installed with 0.9.2 backup preserved. Running connections were not stopped.
+
+### 0.9.4 — keyword rule card redesign
+- Rule pane capped at 820 points. Cards separate header/switch/actions, labelled name and pattern fields, match options, and compact color/scope controls. Narrow layouts stack fields and settings. Reorder buttons disable at boundaries.
+- OperationsFeatureTests: 12 executed, 0 failures. Rendered cards inspected alongside live keyword preview.
+- Release 0.9.4 build 77 packaged and installed; strict codesign and ZIP integrity passed. Previous application backed up without stopping running connections.
+
+### 0.9.5 — optional file recents
+- Recently opened includes an unchecked-by-default Show SFTP control. Terminal/SSH entries stay visible; checking includes SFTP and local file entries. Header remains accessible when all current entries are files.
+- Retention now caps terminal and file histories independently at five each over seven days, so file opens cannot evict SSH records.
+- RecentTargetsTests: 14 executed, 1 skipped, 0 failures, including file-recents eviction regression. Release 0.9.5 build 78 installed after strict signature and ZIP checks; running sessions preserved and previous application backed up.
+
+### 0.9.6 — batch task workspace redesign
+- Rebuilt the page around shared Palette and native controls: compact host search/group/tag filters and selected rows, plain-text command editor, compact task settings, primary run/cancel action, result status filters and table, selected output/copy pane. No unimplemented history entry from the conceptual mockup was added.
+- Invalid timeout drafts prevent run; shared SnippetTextEditor now respects disabled state. Running tasks display their actual target set even after leaving/reopening the page. Native action buttons propagate SwiftUI disabled state as well as their enabled property.
+- Actual MainView/NSHostingView renders inspected at 1050/1400pt, Chinese/English, long host names, success/error/running states, plus 620pt stacked empty layout. Host rows intentionally scroll; long names expose their full value in tooltips.
+- UI actions exercised through native target/action and accessibility: individual/all host selection, clear, run-confirm cancellation (no SSH dispatch), failed/all filtering, output selection, clipboard copy, button corner hit areas, and editor/button disabled state during execution.
+- BatchTasksUITests, OperationsFeatureTests, WorkspaceNavigationTests, SnippetTests and SnippetParameterTests: 28 tests passed, no skips/failures. Final running-target/empty-layout refinement additionally reran BatchTasksUITests successfully.
+- Captures: `native/dist/ui-0.9.6/` contains inspected Chinese/English, failed/running, selected and empty screenshots. Rendering uses test hosts/results; no user servers were used for UI verification.
+- Release 0.9.6 build 79 packaged and installed; strict signature and ZIP integrity passed. Old app backed up to `native/dist/backups/Axon-0.9.5-before-0.9.6.app`. Existing Axon process retained; user restart loads new UI.
+
+### 0.9.7 — standard keyword selection fields
+- Scope, group and host selections reuse NativeSelectionField via AxonChoiceField: shared field colors, 38pt height, full-area hit target and below-field native menu placement. Added this reuse requirement to the project delivery skill.
+- KeywordSelectionTests, HostSelectionFieldTests and OperationsFeatureTests: 16 passed, no failures. Native menu target/actions verified for all scopes, group and optional host binding; field bounds/corner hit areas and absence of default NSPopUpButton checked.
+- Inspected actual NSHostingView renders at 840/600pt, including global and host scope. Captures retained in native/dist/ui-0.9.7/. Expanded OS menu was not separately captured; it uses the existing host-selection popup implementation.
+- Release 0.9.7 build 80 packaged and installed after strict codesign and ZIP integrity checks. Previous app backed up to native/dist/backups/Axon-0.9.6-before-0.9.7.app. Existing process PID 54957 preserved; restart loads new controls.
+
+### 0.9.8 — recent SFTP filter appearance
+- Replaced the standalone checkbox with a compact shared Axon action button: muted SFTP when off, accent/checkmark when on, with accessible label/value and existing help text. Default-off filtering and always-visible SSH semantics are retained.
+- Actual LauncherView renders inspected at 700/1050pt in both states, with SSH and SFTP fixture records. Native button activation verified off/on/off and no horizontal overflow; captures in native/dist/ui-0.9.8/.
+- RecentFilterUITests and RecentTargetsTests: 15 executed, 1 existing test skipped, 0 failures.
+- Release 0.9.8 build 81 packaged, strict signatures and ZIP integrity verified, and installed. Backup: native/dist/backups/Axon-0.9.7-before-0.9.8.app. Running PID 54957 preserved; user restart loads new appearance.
+
+### 0.9.9 — larger batch host selection
+- Target panel widened from 280 to 360pt, populated list from 180 to 300pt; host names use larger type and up to two lines, with larger secondary connection text. Command area height adjusted to maintain panel balance.
+- Group/tag filters reuse AxonChoiceField with folder/tag icons, full field hit area, shared Palette and standard 38pt height; disabled during execution.
+- BatchTasksUITests, OperationsFeatureTests and WorkspaceNavigationTests: 14 passed, no skips/failures. Existing native/accessibility selection, clear, confirmation cancellation, status/output/copy and disabled checks passed.
+- Inspected actual MainView 1400pt Chinese and 1050pt English selected-state renders plus narrow empty layout; captures in native/dist/ui-0.9.9/. Wide and common narrow windows retain columns; smaller windows stack.
+- Release 0.9.9 build 82 packaged and installed after strict signature and archive validation. Backup: native/dist/backups/Axon-0.9.8-before-0.9.9.app. Running PID 54957 preserved; restart loads revised panels.
+
+### 0.9.10 — SFTP connecting transition
+- While opening a remote endpoint, the right pane replaces the host selection list with a dedicated connecting view showing host, effective username/address and progress. Prevents a transient status line from shifting the host list. On error the existing picker/status returns; successful connection enters the file pane.
+- Opening state is published/read-only outside FileManagerModel so asynchronous completion updates the connecting view reliably.
+- SFTPConnectingUITests and FileWorkflowNavigationTests: 5 passed, 0 failures. Connecting render inspected at 520x650 using a delayed injected opener (no user server access); screenshot retained in native/dist/ui-0.9.10/.
+- Release 0.9.10 build 83 packaged, strict codesign/ZIP integrity verified and installed. Previous app backed up to native/dist/backups/Axon-0.9.9-before-0.9.10.app; running PID 54957 unchanged. Restart loads new transition.
+
+### 0.9.11 — full-width host selection workspace
+- Replaced the narrow side panel with a full-width target selection section above command editing. Adaptive host cards use the available width (three columns at 1400pt, two at 1050pt), at least 64pt height and whole-card selection. Search and filters stay outside the independently scrolling grid; selected count and all/clear remain visible.
+- Host cards have neutral surfaces and selected backgrounds, with two-line names. Command editor reduced to 180pt to keep the overall workflow practical.
+- BatchTasksUITests now exercises 39 fixture hosts. BatchTasksUITests plus OperationsFeatureTests: 13 passed, no failures; final filter-width refinement additionally reran BatchTasksUITests successfully. Real MainView Chinese/English renders at 1400/1050pt opened and inspected; captures in native/dist/ui-0.9.11/.
+- Release 0.9.11 build 84 installed after strict signature/archive verification. Backup: native/dist/backups/Axon-0.9.10-before-0.9.11.app. Existing PID 61077 preserved; restart loads revised workspace.
+
+### 0.9.12 — fullscreen chrome leading inset
+- Workspace bar now reserves 84pt for window controls in normal mode and uses 14pt in fullscreen. A per-window probe initializes from styleMask and observes enter/exit notifications, removing old observers on window changes.
+- WorkspaceNavigationTests and FullscreenChromeTests passed (2 tests). Actual MainView renders under enter/exit fullscreen notifications inspected; captures in native/dist/ui-0.9.12/. OS fullscreen Space animation/traffic-light overlay was not exercised to avoid moving the user's active windows; tests simulate the native notifications.
+- Release 0.9.12 build 85 installed after strict codesign/ZIP checks. Backup: native/dist/backups/Axon-0.9.11-before-0.9.12.app. Existing PID 62828 preserved; restart loads the adaptive inset.
+
+### 0.9.13 — consolidated target tools and selection review
+- Search, group, tag, select-all and clear share one horizontal toolbar; narrow layouts wrap. Added Selected (count)/Back to all review action. Review ignores search/group/tag and lists the complete selection, supports deselection, and disables inactive filters while preserving their drafts. Running review uses the actual task target snapshot.
+- List height shrinks for few matching/selected hosts instead of always reserving 300pt.
+- BatchTasksUITests and OperationsFeatureTests: 13 passed, no failures. Review toggle and return exercised alongside existing individual/all/clear/confirm/result/disabled checks. Actual 1400pt Chinese review and 1050pt English toolbar renders inspected; captures in native/dist/ui-0.9.13/.
+- Release 0.9.13 build 86 packaged and installed after strict signature/archive checks. Backup: native/dist/backups/Axon-0.9.12-before-0.9.13.app. Existing PID 63956 retained; restart loads revised target tools.
+
+### 0.9.14 — result row activation and output alignment
+- Each result is now a full-row button with a lightweight chevron. Clicking host/status/time/exit/blank row area selects the output, retaining selected background and accessible output action identity.
+- Output content is anchored to the viewport top-left using explicit minimum viewport bounds, while retaining bidirectional scrolling and selectable/copyable plain text.
+- BatchTasksUITests passed twice, including a final /root short-output fixture render. Row accessibility activation selects failed output and clipboard copy passed. Actual 1400pt render opened and inspected; /root appears at the upper-left. Capture in native/dist/ui-0.9.14/.
+- Release 0.9.14 build 87 installed after strict codesign/archive checks. Backup: native/dist/backups/Axon-0.9.13-before-0.9.14.app. Existing PID 65408 retained; restart loads new result interactions.
+
+### 0.9.15 — target pagination instead of nested scrolling
+- Removed the target grid's inner scroll view/height cap. Main page is the only scrolling container around target selection; cards paginate 12 at a time. Previous/next boundary controls disable appropriately, and page state clamps after removals. Search, group, tag and selection-review changes reset to page one.
+- Cross-page selection persists. Select all continues to select every matching host rather than only the current page; footer communicates that behavior. Selection review uses the same pagination.
+- BatchTasksUITests passed with 39 hosts, including next-page selection and return plus existing all/clear/review/result/copy/running checks. Actual 1400pt Chinese render opened and inspected; capture in native/dist/ui-0.9.15/.
+- Release 0.9.15 build 88 installed after strict signature/archive checks. Backup: native/dist/backups/Axon-0.9.14-before-0.9.15.app. Running PID 65408 preserved; restart loads pagination.
+
+### 0.9.16 — standalone SFTP lifetime across log navigation
+- Standalone file workspace no longer unmounts when its page is inactive and no terminal sessions exist. It remains hidden/non-interactive, preserving its StateObject endpoint lease, remote pane and directory/selection. Existing close-on-disappear still runs when the standalone workspace actually leaves the view hierarchy.
+- StandaloneFilesLifetimeTests and FileWorkflowNavigationTests: 5 passed. Real MainView/NSHostingView route switches SFTP -> logviewer -> SFTP retain the identical FileNativeTable instance while inactive and on return. No user server connection was exercised.
+- Release 0.9.16 build 89 installed after strict signature/archive checks. Backup: native/dist/backups/Axon-0.9.15-before-0.9.16.app. Running PID 65408 retained; restart loads lifetime fix.
+
+### 0.9.17 — external edit source identity
+- External edit tasks capture the source host and authenticated username when opening. Rows show filename, host name, username/address/port and full original path; local working copy details are collapsed. Local tasks are labelled local; unknown remote sources are not mislabelled as the current host.
+- Source snapshots stay attached to tasks when current SFTP host changes or a backend is rebound.
+- ExternalEditSourceUITests and OperationsFeatureTests: 13 passed. Actual ExternalEditsView screenshot inspected with two distinct hosts sharing /root/nohup.out; capture in native/dist/ui-0.9.17/.
+- Release 0.9.17 build 90 installed after strict signature/archive checks. Backup: native/dist/backups/Axon-0.9.16-before-0.9.17.app. Running PID 65408 retained; restart loads source metadata UI for newly opened edit tasks.
+
+### 0.9.18 — external edit empty state
+- ExternalEditsView explicitly fills available width/height. Empty state shows a centered icon, No tracked files and SFTP guidance; header remains aligned with populated tasks. Sheet background uses the same Palette across its toolbar and content.
+- ExternalEditSourceUITests passed after removing all tasks from a populated view. Actual empty render opened and inspected; capture in native/dist/ui-0.9.18/.
+- Release 0.9.18 build 91 installed after strict signature/archive checks. Backup: native/dist/backups/Axon-0.9.17-before-0.9.18.app. Existing PID 70498 preserved; restart loads empty-state fix.
+
+### 0.9.19 — stable target pagination height
+- Cards use a consistent 78pt height. Multi-page grids reserve 12 positions, so partial final pages preserve the grid height and pagination/command panel positions. Single-page filtered sets still size to actual content. Reserved positions are invisible, non-interactive and accessibility-hidden.
+- BatchTasksUITests passed, including first-to-last page navigation at 1050/1400pt and Chinese/English, comparing pagination button Y coordinates (within 1pt), plus existing selection/review/result/copy checks. Actual final-page screenshot inspected; capture in native/dist/ui-0.9.19/.
+- Release 0.9.19 build 92 installed after strict signature/archive checks. Backup: native/dist/backups/Axon-0.9.18-before-0.9.19.app. Existing PID 70498 retained; restart loads stable page height.
+
+## 0.9.20 (93) — External edit side-by-side comparison
+- Replaced unified text presentation with aligned original/local columns, line numbers, removed/added backgrounds, shared vertical/horizontal scrolling and selectable text. Preview bounded at 1,000 lines / 64,000 characters; full upload byte checks remain unchanged.
+- `swift test --package-path native --filter 'ExternalEditSourceUITests|OperationsFeatureTests'`: 15 tests passed, including insertion alignment, replacement and conflict-safe upload regressions.
+- Actual NSHostingView captures at 700 and 1000 pt opened and inspected: `native/dist/ui-0.9.20/axon-diff-700.png`, `axon-diff-1000.png`. Headers, aligned rows and line numbers visible without clipping.
+- Release package built; strict codesign verification and ZIP integrity passed. Installed `/Applications/Axon.app` 0.9.20 after backup to `native/dist/backups/Axon-0.9.19-before-0.9.20.app`.
+- Running PID 74381 retained during replacement; no restart or remote operations performed. User restart required to load new build.
+
+## 0.9.21 (94) — External edit sheet Done button
+- External edit sheet reuses the Axon prominent ChromeButtonStyle, 34pt height, rounded accent surface and 24pt horizontal margins. Escape dismisses the sheet.
+- Three ExternalEditSourceUITests passed. Actual empty sheet screenshot opened and checked at `native/dist/ui-0.9.21/axon-edit-empty.png`; populated source cards also inspected.
+- Release build, strict codesign and ZIP integrity passed. Installed 0.9.21 with previous app backed up at `native/dist/backups/Axon-0.9.20-before-0.9.21.app`.
+- Running PID 78995 retained, no restart or SSH/SFTP interruption. New version loads after user restart.

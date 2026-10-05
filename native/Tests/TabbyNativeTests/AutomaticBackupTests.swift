@@ -41,6 +41,21 @@ import XCTest
         return settings
     }
 
+    func testNewFilePolicyRetainsTwoAutomaticFolderAndS3BackupsAtIdenticalTime() async throws {
+        let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var settings = try folderSettings(fixture.folder); settings.s3Enabled = true
+        var cloud = cloudConfiguration(); cloud.createNewFile = true
+        let harness = AutomaticBackupHarness(settings: settings, cloud: cloud, folder: fixture.folder, password: password)
+        var dependencies = harness.dependencies(); dependencies.now = { Date(timeIntervalSince1970: 0) }
+        let coordinator = AutomaticBackupCoordinator(store: fixture.store, dependencies: dependencies)
+        coordinator.runNow(); await coordinator.waitUntilFinished()
+        coordinator.runNow(); await coordinator.waitUntilFinished()
+        let files = try backupFiles(in: fixture.folder)
+        XCTAssertEqual(files.count, 2); XCTAssertEqual(Set(harness.uploads.map { $0.configuration.objectKey }).count, 2)
+        XCTAssertTrue(harness.uploads.allSatisfy { $0.configuration.objectKey.hasPrefix("Axon/Automatic/Axon-19700101") })
+        for file in files { XCTAssertEqual(try WorkspaceArchiveCodec.decode(Data(contentsOf: file), password: password).workspace.hosts, fixture.store.workspace.hosts) }
+    }
+
     func testMissingSettingsDefaultOffAndMalformedMetadataDoesNotResetToEnabledDefaults() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

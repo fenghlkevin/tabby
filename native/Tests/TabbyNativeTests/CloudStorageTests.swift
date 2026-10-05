@@ -265,6 +265,68 @@ final class CloudStorageTests: XCTestCase {
         XCTAssertEqual(requests[3].headers["if-none-match"], "*")
         XCTAssertTrue(requests.allSatisfy { $0.headers["authorization"]?.hasPrefix("AWS4-HMAC-SHA256 ") == true })
     }
+    func testBackupListSigningPaginationEncodedNamesAndNoDownloadBeforeSelection() async throws {
+        let client = S3BackupClient(configuration: configuration(), secretAccessKey: secretKey, session: session())
+        let request = try client.listRequest(prefix: "中文/+", token: "a+/=")
+        XCTAssertTrue(request.url!.absoluteString.contains("a%2B%2F%3D"))
+        XCTAssertEqual(request.url!.path, "/backups")
+        var requests: [URLRequest] = []
+        S3StubProtocol.handler = { request in
+            requests.append(request)
+            let more = requests.count == 1
+            let key = more ? "Axon%2F%E4%B8%AD%E6%96%87.axonbackup" : "Axon%2Fsecond.axonbackup"
+            let xml = "<ListBucketResult><Contents><Key>" + key + "</Key><LastModified>2026-10-05T00:00:00Z</LastModified><Size>64</Size></Contents><IsTruncated>" + (more ? "true" : "false") + "</IsTruncated>" + (more ? "<NextContinuationToken>a+/=</NextContinuationToken>" : "") + "</ListBucketResult>"
+            return S3Stub(status: 200, chunks: [Data(xml.utf8)])
+        }
+        let entries = try await client.listBackups()
+        XCTAssertEqual(Set(entries.map(\.key)), ["Axon/中文.axonbackup", "Axon/second.axonbackup"])
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests.allSatisfy { $0.url!.query!.contains("list-type=2") && $0.httpMethod == "GET" })
+        XCTAssertTrue(requests[1].url!.absoluteString.contains("continuation-token=a%2B%2F%3D"))
+    }
+    func testMalformedListAndRepeatedPaginationTokenAreRejected() async throws {
+        XCTAssertThrowsError(try S3BackupListParser.parse(Data("<wrong/>".utf8)))
+        XCTAssertThrowsError(try S3BackupListParser.parse(Data("<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>".utf8)))
+        let client = S3BackupClient(configuration: configuration(), secretAccessKey: secretKey, session: session())
+        S3StubProtocol.handler = { _ in S3Stub(status: 200, chunks: [Data("<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>".utf8)]) }
+        do { _ = try await client.listBackups(); XCTFail("Repeated token must stop") } catch { XCTAssertEqual(error as? S3BackupError, .invalidResponse) }
+    }
+    func testExclusiveBackupPublicationKeepsExistingBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("existing.axonbackup")
+        try AutomaticBackupPersistence.writeBackup(Data("original".utf8), to: file, overwrite: false)
+        XCTAssertThrowsError(try AutomaticBackupPersistence.writeBackup(Data("replacement".utf8), to: file, overwrite: false))
+        XCTAssertEqual(try Data(contentsOf: file), Data("original".utf8))
+    }
+    func testNewBackupNamesAreUniqueAndLocalCatalogExcludesDirectoriesAndLinks() throws {
+        let date = Date(timeIntervalSince1970: 0)
+        XCTAssertNotEqual(BackupNaming.filename(date: date), BackupNaming.filename(date: date))
+        XCTAssertTrue(BackupNaming.key(from: "a/b/current.axonbackup", date: date).hasPrefix("a/b/Axon-"))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("one".utf8).write(to: root.appendingPathComponent("one.axonbackup"))
+        try Data().write(to: root.appendingPathComponent("other.txt"))
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("dir.axonbackup"), withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link.axonbackup"), withDestinationURL: root.appendingPathComponent("one.axonbackup"))
+        XCTAssertEqual(try BackupNaming.localEntries(root).map(\.key), ["one.axonbackup"])
+    }
+    func testConnectionMetadataRoundTripPreservesKeychainAndLegacyDefaults() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), file = root.appendingPathComponent("workspace.json")
+        var cloud = CloudConnectionSettings(s3: configuration())
+        defer { try? Secrets.save("", id: cloud.id); try? FileManager.default.removeItem(at: root) }
+        try CloudConnectionPersistence.save(cloud, secret: "test-only-secret", workspaceURL: file)
+        cloud.createNewFile = true; cloud.s3.bucket = "changed-bucket"
+        try CloudConnectionPersistence.saveMetadata(cloud, workspaceURL: file)
+        XCTAssertEqual(try CloudConnectionPersistence.load(workspaceURL: file), cloud)
+        XCTAssertEqual(try Secrets.readChecked(cloud.id), "test-only-secret")
+        let bytes = try Data(contentsOf: CloudConnectionPersistence.url(workspaceURL: file))
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("test-only-secret"))
+        var legacy = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]; legacy.removeValue(forKey: "createNewFile")
+        XCTAssertFalse(try JSONDecoder().decode(CloudConnectionSettings.self, from: JSONSerialization.data(withJSONObject: legacy)).createNewFile)
+    }
+
 }
 
 private struct S3Stub {

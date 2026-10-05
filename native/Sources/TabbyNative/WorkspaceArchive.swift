@@ -272,7 +272,7 @@ enum WorkspaceArchiveCodec {
         // when opening legacy local files. Full archive restoration must never
         // silently replace missing configuration with those defaults.
         guard Set(preferences.keys).isSuperset(of: requiredPreferences),
-              Set(preferences.keys).isSubset(of: requiredPreferences.union(["ansiColors"])),
+              Set(preferences.keys).isSubset(of: requiredPreferences.union(["ansiColors", "keywordRules", "commandHistoryLimit", "commandHistoryExclusions", "commandCompletionNotifications"])),
               !preferences.values.contains(where: { $0 is NSNull }) else {
             throw WorkspaceArchiveError.invalidArchive
         }

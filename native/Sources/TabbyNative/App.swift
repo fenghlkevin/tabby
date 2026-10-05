@@ -46,7 +46,7 @@ import UniformTypeIdentifiers
         }
     }
     private var launched = false
-    func applicationWillTerminate(_ notification: Notification) { SceneWindowController.closeAll(); store?.automaticBackup.cancel(); store?.monitoring.stop(); store?.forwardTasks.values.forEach { $0.cancel() }; store?.forwardEngines.values.forEach { $0.stop() }; store?.sceneTasks.values.forEach { $0.cancel() }; store?.logViewers.forEach { $0.close() }; store?.sessions.forEach { $0.disconnect() } }
+    func applicationWillTerminate(_ notification: Notification) { SceneWindowController.closeAll(); store?.automaticBackup.cancel(); store?.batchTasks.cancelAll(); store?.externalEdits.edits.forEach { $0.stop() }; store?.monitoring.stop(); store?.forwardTasks.values.forEach { $0.cancel() }; store?.forwardEngines.values.forEach { $0.stop() }; store?.sceneTasks.values.forEach { $0.cancel() }; store?.logViewers.forEach { $0.close() }; store?.sessions.forEach { $0.disconnect() } }
     func applicationDidFinishLaunching(_ notification: Notification) {
         launched = true
         store?.applyApplicationIconAtLaunch()
@@ -126,6 +126,7 @@ final class MainWindowLifecycleView: NSView {
 struct MainView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var windowFullscreen = false
     @State private var inspectorHost: Host?
     @State private var inspectorGroup: HostGroup?
     @State private var selectedHost: UUID?
@@ -141,7 +142,7 @@ struct MainView: View {
     @State private var newTabOpen = false
     @State private var tagsManagementOpen = false
     @State private var sceneLayoutEditing: WorkScene?
-    private let vaultSections = ["hosts", "monitoring", "credentials", "forwards", "snippets", "scenes", "known", "logs", "settings"]
+    private let vaultSections = ["hosts", "monitoring", "credentials", "forwards", "snippets", "batchTasks", "scenes", "known", "logs", "settings"]
     var vaultSelected: Bool { vaultSections.contains(store.section) }
     var terminalVisible: Bool { store.section == "terminal" || (store.section == "scene" && store.currentScene?.mode == "terminal") }
     var hostCatalog: HostLibraryCatalog { HostLibraryCatalog(hosts: store.workspace.hosts, group: store.group, query: store.search, tag: selectedTag, favoritesOnly: favoritesOnly, sort: sort, workspace: store.workspace) }
@@ -156,6 +157,7 @@ struct MainView: View {
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }.foregroundStyle(Palette.text).font(.system(size: 13)).background(Palette.background)
         .background(WindowSurface())
+        .background(WindowFullscreenProbe(isFullscreen: $windowFullscreen))
         .background(MonitoringVisibilityProbe { value in monitoringForeground = value })
         .onAppear { returnToHostsIfNeeded(); updateMonitoring() }
         .onDisappear { store.monitoring.stop() }
@@ -211,6 +213,7 @@ struct MainView: View {
                 if store.section == "logs" { LogsView() }
                 if store.section == "scenes" { ScrollView { WorkSceneLibrary(query: "").padding(24) } }
                 if store.section == "snippets" { SnippetsView() }
+                if store.section == "batchTasks" { BatchTasksView(center: store.batchTasks) }
                 if store.section == "launcher" { LauncherView() }
             }.frame(width: centerWidth, height: height).background(Palette.background).clipped()
             if terminalVisible {
@@ -335,7 +338,7 @@ struct MainView: View {
                     .frame(width: 28, height: 34)
             }
         }.sheet(item: $sceneLayoutEditing) { WorkSceneEditor(value: $0).environmentObject(store) }
-        .padding(.leading, 84).padding(.trailing, 14).frame(height: 52)
+        .padding(.leading, windowFullscreen ? 14 : 84).padding(.trailing, 14).frame(height: 52)
             .background(Palette.chrome)
             .focusEffectDisabled().animation(.easeInOut(duration: 0.16), value: store.section)
     }
@@ -483,7 +486,12 @@ struct MainView: View {
                         .allowsHitTesting(sceneMember && (filesMode ? store.activeSession == session.id : pair.contains(session.id)))
                 }
                 if peer != nil && terminalMode { Rectangle().fill(Palette.chrome).frame(width: 6).offset(x: (geometry.size.width - 6) / 2) }
-                if store.sessions.isEmpty && filesMode { DisconnectedFilesWorkspace(store: store) }
+                // Keep the standalone file workspace mounted while opening logs or other tabs.
+                // Its StateObject owns the endpoint lease and directory selection.
+                if store.sessions.isEmpty {
+                    DisconnectedFilesWorkspace(store: store)
+                        .opacity(filesMode ? 1 : 0).allowsHitTesting(filesMode)
+                }
                 if isScene, store.currentScene?.sessionIDs.isEmpty == true { ContentUnavailableView(store.text("Scene sessions have ended", "场景会话已结束"), systemImage: "terminal", description: Text(store.text("Close and reopen this scene to reconnect its saved hosts.", "关闭并重新打开场景，可重新连接已保存的主机。"))) }
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading).clipped()
         }
@@ -581,6 +589,11 @@ struct HostEditor: View {
                     field(store.text("Tags", "标签")) { TagsEditor(tags: $host.tags, pending: $tagDraft, suggestions: store.tags, chinese: store.chinese) }
                     Divider().overlay(Palette.border)
                     HStack { sectionTitle("SSH"); Spacer(); Text(store.text("Enabled", "已启用")).font(.system(size: 11)).foregroundStyle(Palette.accent) }
+                    Toggle(store.text("Persistent session (tmux)", "持久会话（tmux）"), isOn: Binding(get: { host.persistentSession ?? false }, set: { host.persistentSession = $0 }))
+                    if host.persistentSession == true {
+                        TextField(store.text("Session name · optional", "会话名称 · 可选"), text: Binding(get: { host.persistentSessionName ?? "" }, set: { host.persistentSessionName = $0 })).appInput()
+                        Text(store.text("Requires tmux 3.3+ and Bash. Closing a tab keeps remote tasks running.", "需要 tmux 3.3+ 和 Bash；关闭标签后远端任务继续运行。")).font(.caption).foregroundStyle(Palette.muted)
+                    }
                     inheritedField(store.text("Port", "端口"), keyPath: \.port) {
                         if groupDefaults != nil && host.groupInheritance?.port == true {
                             Text(String(effectiveHost.port)).frame(maxWidth: .infinity, alignment: .leading).appInput().foregroundStyle(Palette.muted)

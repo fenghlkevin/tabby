@@ -6,6 +6,9 @@ enum PreferencesValidation {
     static func validated(_ original: Preferences, chinese: Bool) throws -> Preferences {
         func failure(_ en: String, _ zh: String) -> AppFailure { .message(chinese ? zh : en) }
         var value = original
+        guard (100...50000).contains(value.commandHistoryLimit), value.keywordRules.count <= 64 else { throw failure("History limit must be 100–50000; up to 64 keyword rules", "历史保留数须为 100–50000；关键词规则最多 64 条") }
+        for rule in value.keywordRules { _ = try rule.expression() }
+        guard value.commandHistoryExclusions.utf8.count <= 8192 else { throw failure("Exclusions too long", "排除规则过长") }
         guard ["auto", "zh-CN", "en-US"].contains(value.language) else { throw failure("Choose a language", "请选择语言") }
         guard ApplicationIconAppearance.styles.contains(value.applicationIcon) else { throw failure("Choose an application icon", "请选择应用图标") }
         value.fontName = value.fontName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,6 +126,8 @@ enum TerminalPaste {
             throw AppFailure.message(error ?? text("Could not save settings", "无法保存设置"))
         }
         iconChange?.commit()
+        if Bundle.main.bundleIdentifier == "org.tabby.native" { CommandHistoryStore.shared.trim(to: value.commandHistoryLimit) }
+        if value.commandCompletionNotifications && !previous.preferences.commandCompletionNotifications { CommandCompletionNotification.requestPermission() }
         for session in sessions { if let terminal = session.terminal { TerminalAppearance.apply(value, to: terminal) } }
     }
 
