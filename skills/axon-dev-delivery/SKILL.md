@@ -18,10 +18,20 @@ description: 开发、修复和交付本项目 native/ 下的 Axon macOS 应用�
 
 - `native/Sources/TabbyNative/Models.swift` 的 `Palette`：背景、侧栏、卡片、输入、边框、文字、选中和语义强调色。
 - `native/Sources/TabbyNative/Design.swift`：`ChromeButtonStyle`、`IconButtonStyle`、`appInput()`、`PaneHeading` 及原生控件封装。
-- `HostSelectionFields.swift` 的 `NativeSelectionField`/`AxonChoiceField`：Axon 标准下拉选择外观、整块命中与下方菜单。表单选择复用它们，不用默认 SwiftUI Picker 或仅修改 `.pickerStyle(.menu)` 来冒充标准控件。
+- `HostSelectionFields.swift` 的 `NativeSelectionField`/`AxonChoiceField`：Axon 标准下拉选择外观、整块命中与下方浮层。表单选择复用它们，不用默认 SwiftUI Picker 或仅修改 `.pickerStyle(.menu)` 来冒充标准控件。
 - `WorkspaceNavigation.swift`、`PreferencesView.swift`：导航、内容起点、设置提交和反馈。
 
 复用现有浅色外壳与深色顶栏；主操作使用 `Palette.accent`，次操作弱化，SSH/终端和 SFTP 使用既有语义色。成功/失败同时提供文字或图标，不能仅靠颜色。终端与输出区尊重用户终端主题，不将其应用到整个界面。新增控件先复用公共封装，保持点击区域、焦点、禁用态和键盘行为一致。
+
+## 下拉面板与选择项（用户确认的统一规范）
+
+修改下拉、菜单或选择项前，对照用户提供的 [主机选择面板](references/ui/choice-popover.png)、[操作菜单](references/ui/action-menu.png) 与 [方形勾选卡片](references/ui/selection-cards.png)。本规范适用于整个 Axon 的表单、设置、工具栏、弹窗及工作台，不只针对主机编辑页。
+
+- 收起的下拉字段沿用 38pt 高度、Palette.field 背景、8pt 圆角、左侧语义图标、标题和右侧 chevron.down；整块可点，禁用态不可展开。
+- 展开面板使用 Palette.sidebar 浅色背景、圆角与锚点箭头；面板内边距 8–16pt，条目圆角 8pt、常规行至少 34pt。悬停／键盘焦点使用 Palette.selected，已选项显示 Palette.accent 勾号；主机等复杂条目可使用白色卡片、标题及 muted 次级信息。分隔线区分操作组，删除等危险操作使用语义危险色。
+- 搜索不是每个下拉的必需功能；有搜索时沿用 Axon 搜索字段。长列表可滚动，长名称不能挤出勾号或箭头。不能只统一收起外观而保留展开后的默认 NSMenu／SwiftUI Picker 外观。复用 AxonMenuPopover、AppActionMenu 或现有 JumpHostChooser 的真实浮层样式。
+- 单选与多选项均采用图中的方形标记：未选为 muted 描边空方框，选中为 accent 实心方框加白色勾号，整块卡片使用 Palette.selected，未选为浅色背景；文字保持 Palette.text。复用 AxonSelectionMark／AxonSelectionDrawing 或 AxonCheckboxStyle。单选仍互斥，多选仍独立切换；不能因为视觉相同而改变数据或选择语义。开关型设置可保留明确的 switch；普通导航标签不强行加勾选框。
+- 保留 Tab、方向键、Return／Space 选择、Escape／点击外部关闭、焦点恢复、无障碍选择状态和底层 enabled。实际验收至少覆盖展开面板、已选／未选、禁用、长名称及键盘选择，不能只截图收起后的字段。
 
 ## 布局与操作
 

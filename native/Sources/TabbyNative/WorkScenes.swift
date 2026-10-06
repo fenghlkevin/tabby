@@ -19,6 +19,7 @@ struct WorkScene: Codable, Identifiable, Equatable {
     var name = ""
     var terminals: [WorkSceneTerminal] = []
     var split = false
+    var paneGroups: [[Int]]?
     var selectedIndex = 0
     var directories: [WorkSceneLocation] = []
     var logFiles: [WorkSceneLocation] = []
@@ -31,6 +32,10 @@ struct WorkScene: Codable, Identifiable, Equatable {
         guard (allowEmpty || !terminals.isEmpty), terminals.count <= 32,
               directories.count <= 32, logFiles.count <= 32, forwardIDs.count <= 32 else {
             throw AppFailure.message("A scene needs 1–32 terminals / 场景需要 1–32 个终端")
+        }
+        if let paneGroups {
+            let indices = paneGroups.flatMap { $0 }
+            guard Set(indices).count == indices.count, paneGroups.allSatisfy({ (2...4).contains($0.count) && $0.allSatisfy { terminals.indices.contains($0) } }) else { throw AppFailure.message("Invalid pane layout / 分屏布局无效") }
         }
         let ids = terminals.map(\.id) + directories.map(\.id) + logFiles.map(\.id)
         guard Set(ids).count == ids.count, Set(forwardIDs).count == forwardIDs.count else { throw AppFailure.message("Duplicate scene items / 场景项目重复") }
@@ -127,7 +132,9 @@ struct WorkScene: Codable, Identifiable, Equatable {
         let runtime = OpenWorkScene(definition: scene, sessionIDs: created.map(\.id), store: self)
         sessions += created; openScenes.append(runtime)
         activeSceneID = runtime.id; activeSession = created[min(scene.selectedIndex, created.count - 1)].id; section = "scene"
-        if scene.split, created.count >= 2 { splitPartners[created[0].id] = created[1].id; splitPartners[created[1].id] = created[0].id }
+        if let groups = scene.paneGroups {
+            for group in groups { let ids = group.map { created[$0].id }; terminalPaneGroups[ids[0]] = ids; if ids.count == 2 { splitPartners[ids[0]] = ids[1]; splitPartners[ids[1]] = ids[0] } }
+        } else if scene.split, created.count >= 2 { splitPartners[created[0].id] = created[1].id; splitPartners[created[1].id] = created[0].id }
         created.forEach { _ = $0.makeView() }
         let taskToken = UUID(); sceneTaskTokens[scene.id] = taskToken
         sceneTasks[scene.id] = Task { [weak self, weak runtime] in
@@ -197,7 +204,8 @@ struct WorkScene: Codable, Identifiable, Equatable {
             scene.logFiles = logViewers.map { WorkSceneLocation(hostID: $0.hostID, path: $0.entry.path) }
         }
         scene.selectedIndex = max(0, source.firstIndex { $0.id == activeSession } ?? 0)
-        scene.split = source.first.map { splitPartners[$0.id] != nil } ?? false
+        scene.paneGroups = source.filter { paneIDs(containing: $0.id).first == $0.id }.map { session in paneIDs(containing: session.id).compactMap { id in source.firstIndex { $0.id == id } } }.filter { $0.count >= 2 }
+        scene.split = scene.paneGroups?.isEmpty == false
         scene.directories.removeAll { location in location.hostID.map { id in !workspace.hosts.contains { $0.id == id } } ?? false }
         scene.logFiles.removeAll { location in location.hostID.map { id in !workspace.hosts.contains { $0.id == id } } ?? false }
         scene.forwardIDs.removeAll { id in !workspace.forwards.contains { $0.id == id } }
@@ -269,15 +277,15 @@ struct WorkSceneLibrary: View {
                 HStack {
                     Button { do { try SceneWindowController.open(scene, owner: store) } catch { store.error = error.localizedDescription } } label: {
                         HStack(spacing: 12) { IconTile(symbol: "rectangle.3.group", color: Palette.blue, size: 30); VStack(alignment: .leading) { Text(scene.name).font(.system(size: 13, weight: .medium)); Text("\(scene.terminals.count) " + store.text("terminals", "个终端") + " · \(scene.logFiles.count) " + store.text("logs", "个日志")).font(.caption).foregroundStyle(Palette.muted) }; Spacer() }.padding(10).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                    Button { editing = scene } label: { Image(systemName: "pencil").frame(width: 26, height: 30) }.buttonStyle(.plain).help(store.text("Edit scene", "编辑场景"))
-                    Button { deleting = scene } label: { Image(systemName: "trash").frame(width: 26, height: 30) }.buttonStyle(.plain).help(store.text("Remove scene", "移除场景"))
+                    }.buttonStyle(AxonSurfaceButtonStyle())
+                    Button { editing = scene } label: { Image(systemName: "pencil").frame(width: 26, height: 30) }.buttonStyle(AxonSurfaceButtonStyle()).help(store.text("Edit scene", "编辑场景"))
+                    Button { deleting = scene } label: { Image(systemName: "trash").frame(width: 26, height: 30) }.buttonStyle(AxonSurfaceButtonStyle()).help(store.text("Remove scene", "移除场景"))
                 }.background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 9))
             }
         }.sheet(item: $editing) { WorkSceneEditor(value: $0).environmentObject(store) }
             .appAlert(store.text("Remove scene?", "移除工作场景？"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-                Button(store.text("Cancel", "取消"), role: .cancel) { deleting = nil }
-                Button(store.text("Remove", "移除"), role: .destructive) { if let deleting { do { try store.removeScene(deleting.id) } catch { store.error = error.localizedDescription } }; deleting = nil }
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) { deleting = nil }
+                AppAlertButton(store.text("Remove", "移除"), role: .destructive) { if let deleting { do { try store.removeScene(deleting.id) } catch { store.error = error.localizedDescription } }; deleting = nil }
             } message: { Text(store.text("The saved template will be removed. Open sessions stay available.", "移除保存的模板，已打开的场景仍可继续使用。")) }
     }
 }
@@ -306,23 +314,50 @@ struct WorkSceneEditor: View {
                                 HStack {
                                     Text(store.text("Terminal", "终端") + " \((value.terminals.firstIndex { $0.id == item.id } ?? 0) + 1)").font(.system(size: 12, weight: .semibold))
                                     Spacer()
-                                    Button { moveTerminal(item.id, by: -1) } label: { Image(systemName: "chevron.up") }.help(store.text("Move up", "上移"))
-                                    Button { moveTerminal(item.id, by: 1) } label: { Image(systemName: "chevron.down") }.help(store.text("Move down", "下移"))
+                                    Button { moveTerminal(item.id, by: -1) } label: { Image(systemName: "chevron.up") }.help(store.text("Move up", "上移")).disabled(value.terminals.first?.id == item.id)
+                                    Button { moveTerminal(item.id, by: 1) } label: { Image(systemName: "chevron.down") }.help(store.text("Move down", "下移")).disabled(value.terminals.last?.id == item.id)
                                     Button { value.terminals.removeAll { $0.id == item.id }; value.selectedIndex = 0; if value.terminals.count < 2 { value.split = false } } label: { Image(systemName: "trash") }.help(store.text("Remove terminal", "移除此终端"))
                                 }.buttonStyle(IconButtonStyle())
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 5) { Text(store.text("Connect to", "连接到")).font(.caption).foregroundStyle(Palette.muted); hostPicker($item.hostID).frame(height: 38) }
-                                    Toggle(store.text("tmux persistence", "tmux 持久会话"), isOn: Binding(get: { item.persistentSession ?? false }, set: { item.persistentSession = $0 })).disabled(item.hostID == nil)
-                                    if item.persistentSession == true { TextField(store.text("Session name · optional", "会话名称 · 可选"), text: Binding(get: { item.persistentSessionName ?? "" }, set: { item.persistentSessionName = $0 })).appInput() }
-                                    VStack(alignment: .leading, spacing: 5) { Text(store.text("Initial directory · optional", "初始目录 · 可选")).font(.caption).foregroundStyle(Palette.muted); TextField("/var/www/app", text: $item.directory).appInput() }
+                                HStack(alignment: .top, spacing: 16) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(store.text("Connect to", "连接到")).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+                                        SceneHostSelector(selection: $item.hostID).frame(height: 38)
+                                            .onChange(of: item.hostID) { _, id in if id == nil { item.persistentSession = false } }
+                                    }.frame(maxWidth: .infinity)
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(store.text("Initial directory · optional", "初始目录 · 可选")).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+                                        TextField("/var/www/app", text: $item.directory).appInput()
+                                    }.frame(maxWidth: .infinity)
                                 }
-                            }.padding(12).background(Palette.field.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8))
+                                Divider().padding(.vertical, 4)
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Toggle(isOn: Binding(get: { item.persistentSession ?? false }, set: { item.persistentSession = $0 })) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(store.text("Keep the remote session with tmux", "使用 tmux 保留远程会话")).font(.system(size: 12, weight: .medium))
+                                            Text(item.hostID == nil
+                                                ? store.text("Available for SSH hosts", "选择 SSH 主机后可用")
+                                                : store.text("Reconnect to the same session after disconnecting", "断线后重新连接到同一个会话"))
+                                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                                        }.padding(.vertical, 8)
+                                    }.toggleStyle(AxonCheckboxStyle()).disabled(item.hostID == nil)
+                                    if item.persistentSession == true && item.hostID != nil {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text(store.text("tmux session name · optional", "tmux 会话名称 · 可选")).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+                                            TextField(store.text("Use the default session name", "留空使用默认会话名称"), text: Binding(get: { item.persistentSessionName ?? "" }, set: { item.persistentSessionName = $0 })).appInput()
+                                        }.frame(maxWidth: 340, alignment: .leading).padding(.leading, 34)
+                                    }
+                                }
+
+                            }.padding(16).background(Palette.sidebar).clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                         if value.terminals.isEmpty { Text(store.text("Add a terminal to connect to a host or open your local shell.", "添加一个终端，连接主机或打开本地 Shell。")).font(.caption).foregroundStyle(Palette.muted) }
                         HStack {
                             Button { value.terminals.append(WorkSceneTerminal()) } label: { Label(store.text("Add terminal", "添加终端"), systemImage: "plus") }.buttonStyle(ChromeButtonStyle())
                             Spacer()
-                            Toggle(store.text("Show first two side by side", "前两个终端并排显示"), isOn: $value.split).toggleStyle(.checkbox).disabled(value.terminals.count < 2)
+                            AxonChoiceField(selection: Binding(get: { value.paneGroups?.first?.count ?? (value.split ? 2 : 1) }, set: { count in
+                                value.split = count > 1
+                                value.paneGroups = count > 1 ? [Array(0..<min(count, value.terminals.count))] : nil
+                            }), choices: [(1, store.text("Separate tabs", "独立标签"))] + (value.terminals.count >= 2 ? [(2, store.text("Two panes", "双终端分屏"))] : []) + (value.terminals.count >= 3 ? [(3, store.text("Three panes", "三终端分屏"))] : []) + (value.terminals.count >= 4 ? [(4, store.text("Four panes", "四终端分屏"))] : []), placeholder: store.text("Pane layout", "分屏布局"), symbol: "rectangle.split.2x2", identifier: "axon-scene-pane-layout").frame(width: 210)
                         }
                     }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
                     locationEditor(title: store.text("SFTP directories · optional", "SFTP 文件目录 · 可选"), description: store.text("Saved shortcuts inside this scene. Choose a host and enter an absolute directory path, for example /var/www/app.", "在场景内保存常用目录快捷入口。选择主机并填写绝对目录，例如 /var/www/app。"), placeholder: "/var/www/app", buttonTitle: store.text("Add directory", "添加文件目录"), locations: $value.directories)
@@ -331,9 +366,9 @@ struct WorkSceneEditor: View {
                         sectionHeading(store.text("Port forwarding / SOCKS · optional", "端口转发 / SOCKS 代理 · 可选"), description: store.text("Reuse rules from Port forwarding. Enable automatic start only if you want these rules started with this scene.", "复用“端口转发”中已有的规则。需要随场景启动时，再开启下方选项。"))
                         if store.workspace.forwards.isEmpty { Text(store.text("No saved rules. Create rules under Port forwarding first; you can skip this section.", "尚无转发规则。可先到左侧“端口转发”创建；不需要代理时跳过此项。")).font(.caption).foregroundStyle(Palette.muted) }
                         ForEach(store.workspace.forwards) { rule in
-                            Toggle(rule.name, isOn: Binding(get: { value.forwardIDs.contains(rule.id) }, set: { on in value.forwardIDs.removeAll { $0 == rule.id }; if on { value.forwardIDs.append(rule.id) } }))
+                            Toggle(rule.name, isOn: Binding(get: { value.forwardIDs.contains(rule.id) }, set: { on in value.forwardIDs.removeAll { $0 == rule.id }; if on { value.forwardIDs.append(rule.id) } })).toggleStyle(AxonCheckboxStyle())
                         }
-                        Toggle(store.text("Start selected rules when opening", "打开场景时启动所选规则"), isOn: $value.startForwards).toggleStyle(.checkbox).disabled(value.forwardIDs.isEmpty)
+                        Toggle(store.text("Start selected rules when opening", "打开场景时启动所选规则"), isOn: $value.startForwards).toggleStyle(AxonCheckboxStyle()).disabled(value.forwardIDs.isEmpty)
                     }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
                 }.padding(.trailing, 4)
             }
@@ -346,6 +381,11 @@ struct WorkSceneEditor: View {
             }
             if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
         }.padding(24).frame(width: 780, height: 640).background(Palette.sidebar).foregroundStyle(Palette.text)
+            .onChange(of: value.terminals.map(\.id)) { old, new in
+                guard let groups = value.paneGroups else { return }
+                value.paneGroups = groups.map { group in group.compactMap { index in old.indices.contains(index) ? new.firstIndex(of: old[index]) : nil } }.filter { $0.count >= 2 }
+                value.split = value.paneGroups?.isEmpty == false
+            }
     }
     private func sectionHeading(_ title: String, description: String) -> some View {
         VStack(alignment: .leading, spacing: 5) { Text(title).font(.system(size: 14, weight: .semibold)); Text(description).font(.system(size: 12)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true) }
@@ -389,7 +429,7 @@ struct WorkSceneToolbar: View {
             }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(Palette.text)
             Spacer(minLength: 0)
             if scene.mode == "terminal" { Button(action: toggleTools) { Image(systemName: "sidebar.right") }.buttonStyle(ChromeButtonStyle()).help(store.text("Terminal tools", "终端工具")) }
-            Picker(store.text("View", "视图"), selection: $scene.mode) { Text(store.text("Terminal", "终端")).tag("terminal"); Text("SFTP").tag("files"); Text(store.text("Logs", "日志")).tag("logs") }.pickerStyle(.segmented).frame(width: 230)
+            AxonChoiceField(selection: $scene.mode, choices: [("terminal", store.text("Terminal", "终端")), ("files", "SFTP"), ("logs", store.text("Logs", "日志"))], placeholder: store.text("View", "视图"), symbol: "rectangle.3.group", identifier: "axon-scene-view").frame(width: 230)
             Button { editing = store.captureScene() } label: { Label(store.text("Save layout", "保存布局"), systemImage: "square.and.arrow.down") }.buttonStyle(ChromeButtonStyle())
             AppActionMenu {
                 ForEach(scene.definition.directories) { location in Button(location.path) { store.openSceneDirectory(location) } }
@@ -414,8 +454,8 @@ struct WorkAreaTab: View {
     let close: () -> Void
     var body: some View {
         HStack(spacing: 8) {
-            Button(action: close) { Image(systemName: "xmark").frame(width: 18, height: 30) }.buttonStyle(.plain).accessibilityLabel("Close " + title)
-            Button(action: select) { Label(title, systemImage: symbol).lineLimit(1).frame(maxWidth: .infinity, minHeight: 30, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain)
+            Button(action: close) { Image(systemName: "xmark").frame(width: 18, height: 30) }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel("Close " + title)
+            Button(action: select) { Label(title, systemImage: symbol).lineLimit(1).frame(maxWidth: .infinity, minHeight: 30, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(AxonSurfaceButtonStyle())
         }.padding(.horizontal, 10).frame(width: selected ? WorkspaceTabDimensions.active : WorkspaceTabDimensions.inactive, height: 34)
             .foregroundStyle(Palette.chromeText).background(Color(hex: selected ? "#45475F" : "#393C52")).clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityIdentifier("axon-workarea-tab-" + title)
     }

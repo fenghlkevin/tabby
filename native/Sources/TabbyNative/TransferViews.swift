@@ -18,7 +18,7 @@ struct TransferQueuePanel: View {
                         Button { queue.expandPanel() } label: {
                             Label("\(store.text("Transfers", "传输队列"))  \(queue.jobs.count)", systemImage: "arrow.up.arrow.down")
                                 .font(.system(size: 12, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(AxonSurfaceButtonStyle())
                             .help(store.text("Show transfers", "展开传输队列"))
                         HostCardActionButton(symbol: "chevron.up", color: NSColor(Palette.muted), label: store.text("Show transfers", "展开传输队列"), identifier: "transfer-queue-expand", action: queue.expandPanel)
                             .frame(width: 28, height: 28)

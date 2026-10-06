@@ -134,8 +134,8 @@ struct TagsManagementView: View {
         }.frame(width: 570, height: 560).foregroundStyle(Palette.text).background(Palette.sidebar)
             .appAlert(store.text("Delete tag?", "删除标签？"),
                    isPresented: Binding(get: { deletionName != nil }, set: { if !$0 { deletionName = nil } }), presenting: deletionName) { name in
-                Button(store.text("Cancel", "取消"), role: .cancel) { deletionName = nil }
-                Button(store.text("Delete", "删除"), role: .destructive) { delete(name) }
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) { deletionName = nil }
+                AppAlertButton(store.text("Delete", "删除"), role: .destructive) { delete(name) }
             } message: { name in
                 let count = store.catalogHostCount(name, section: .tags)
                 Text(store.text("“\(name)” will be removed from \(count) hosts. The hosts will remain in your vault.", "将从 \(count) 台主机中移除“\(name)”标签，主机仍保留在主机库中。"))

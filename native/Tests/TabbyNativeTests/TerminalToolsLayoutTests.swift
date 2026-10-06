@@ -5,6 +5,101 @@ import XCTest
 @testable import TabbyNative
 
 @MainActor final class TerminalToolsLayoutTests: XCTestCase {
+    func testPaneHeaderDisappearsWhenClosingOrSeparatingLastPeer() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(fileURL: directory.appendingPathComponent("workspace.json"))
+        let first = TerminalSession(host: nil, store: store)
+        let peer = TerminalSession(host: nil, store: store)
+        let history = CommandHistoryStore(fileURL: directory.appendingPathComponent("history.json"))
+        first.commandHistoryStore = history; peer.commandHistoryStore = history
+        defer { first.disconnect(); peer.disconnect() }
+        store.sessions = [first, peer]; store.activeSession = first.id
+        store.terminalPaneGroups[first.id] = [first.id, peer.id]
+        let hosting = NSHostingView(rootView: SessionWorkspace(session: first, showFiles: false, active: true, focused: true))
+        let window = show(hosting, size: NSSize(width: 800, height: 500)); defer { window.close() }
+        try await settle(hosting)
+        let terminal = try XCTUnwrap(first.terminal)
+        let splitFrame = terminal.convert(terminal.bounds, to: hosting)
+        try diagnose(hosting, name: "pane-two")
+        store.separateSession(peer.id); try await settle(hosting)
+        let singleFrame = terminal.convert(terminal.bounds, to: hosting)
+        XCTAssertEqual(singleFrame.height - splitFrame.height, 32, accuracy: 2)
+        XCTAssertTrue(first.terminal === terminal)
+        try diagnose(hosting, name: "pane-single-separated")
+        store.terminalPaneGroups[first.id] = [first.id, peer.id]; try await settle(hosting)
+        XCTAssertEqual(terminal.convert(terminal.bounds, to: hosting).height, splitFrame.height, accuracy: 2)
+        store.close(peer.id); try await settle(hosting)
+        XCTAssertEqual(terminal.convert(terminal.bounds, to: hosting).height, singleFrame.height, accuracy: 2)
+        XCTAssertTrue(first.terminal === terminal)
+        try diagnose(hosting, name: "pane-single-closed")
+    }
+
+    func testPopulatedFiveTabsFitAndResetScrollWhenSwitching() async throws {
+        _ = NSApplication.shared
+        let restore = enableAccessibility(); defer { restore() }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(fileURL: directory.appendingPathComponent("workspace.json"))
+        store.workspace.preferences.language = "zh-CN"
+        var remote = TabbyNative.Host(); remote.name = "审查主机-long-host-name"; remote.address = "fixture.invalid"
+        let session = TerminalSession(host: remote, store: store)
+        session.connected = true; session.commandHistoryReady = true
+        store.sessions = [session]; store.activeSession = session.id
+        let history = CommandHistoryStore(fileURL: directory.appendingPathComponent("history.json"))
+        session.commandHistoryStore = history
+        for i in 0..<30 { history.append(ExecutedCommand(hostID: remote.id, hostName: remote.name, sessionID: session.id, command: "printf '长命令-\(i)'", directory: "/root", exitCode: 0, duration: 1)) }
+        store.workspace.snippets = (0..<30).map { i in var v = CommandSnippet(); v.name = "片段-\(i)"; v.body = String(repeating: "long-command ", count: 8); return v }
+        let id = MonitoringTargetID(address: remote.address, port: remote.port, username: remote.username)
+        let project = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let raw = try String(contentsOf: project.appendingPathComponent("scripts/fixtures/monitoring-linux-16cores-next.txt"), encoding: .utf8)
+        store.monitoring.configure(sources: [MonitoringSource(id: id, connectionToken: "fixture", hostID: remote.id, label: remote.name, group: "QA", execute: { _, _ in raw })], entries: [], demand: .overview, foreground: true)
+        defer { store.monitoring.stop() }
+        for _ in 0..<100 where store.monitoring.snapshots[id] == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(store.monitoring.snapshots[id]); XCTAssertNil(session.client)
+        let state = Selection()
+        let hosting = NSHostingView(rootView: Fixture(state: state, history: history).environmentObject(store))
+        let window = show(hosting, size: NSSize(width: 1050, height: 550)); defer { window.close() }
+        for size in [NSSize(width: 1050, height: 550), NSSize(width: 1400, height: 900)] {
+            window.setContentSize(size); state.tool = "theme"; try await settle(hosting)
+            for tool in ["productivity", "status", "snippets", "history", "theme", "productivity"] {
+                try button(tool, in: hosting).performClick(nil); try await settle(hosting)
+                let scroll = try XCTUnwrap(find(NSScrollView.self, in: hosting).first { $0.frame.width <= 330 && $0.frame.height > 80 })
+                let document = try XCTUnwrap(scroll.documentView)
+                XCTAssertLessThanOrEqual(scroll.contentView.bounds.minY, 1, "Switching tabs must start at the top")
+                XCTAssertLessThanOrEqual(document.bounds.width, scroll.contentView.bounds.width + 2, "No horizontal clipping: " + tool)
+                try diagnose(hosting, name: "audit-\(tool)-\(Int(size.height))-top")
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+                scroll.reflectScrolledClipView(scroll.contentView); try await settle(hosting)
+                XCTAssertGreaterThanOrEqual(scroll.contentView.bounds.maxY + 2, document.bounds.maxY)
+                try diagnose(hosting, name: "audit-\(tool)-\(Int(size.height))-bottom")
+            }
+        }
+    }
+
+    func testHistorySelectedAndUnselectedControlsRenderOnDarkSurface() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(fileURL: directory.appendingPathComponent("workspace.json"))
+        store.workspace.preferences.language = "zh-CN"
+        let session = TerminalSession(host: nil, store: store)
+        session.commandHistoryReady = true
+        store.sessions = [session]; store.activeSession = session.id
+        let history = CommandHistoryStore(fileURL: directory.appendingPathComponent("history.json"))
+        history.append(ExecutedCommand(hostID: nil, hostName: "测试主机", sessionID: session.id, command: "ps aux", directory: "/root", exitCode: 0, duration: 1))
+        let hosting = NSHostingView(rootView: CommandHistoryPanel(history: history).padding(16).frame(width: 320).foregroundStyle(TerminalChrome.text).background(TerminalChrome.background).colorScheme(.dark).environmentObject(store))
+        let window = show(hosting, size: NSSize(width: 320, height: 700)); defer { window.close() }
+        try await settle(hosting)
+        try diagnose(hosting, name: "history-selected-dark")
+        session.commandHistoryRecording = false
+        try await settle(hosting)
+        try diagnose(hosting, name: "history-unselected-dark")
+        XCTAssertEqual(history.entries.count, 1)
+        XCTAssertFalse(session.commandHistoryRecording)
+    }
+
     func testSwitchingAllFiveToolsKeepsFullHeightWidthAndHeaderPositions() async throws {
         _ = NSApplication.shared
         let restore = enableAccessibility(); defer { restore() }
@@ -117,6 +212,7 @@ import XCTest
         store.workspace.preferences.localLoginShell = false
         store.connect()
         let session = try XCTUnwrap(store.sessions.first)
+        session.commandHistoryStore = CommandHistoryStore(fileURL: directory.appendingPathComponent("history.json"))
         // Keep the production hosting size policies; clearing sizingOptions
         // would conceal content minimum-size feedback into the outer window.
         let hosting = NSHostingView(rootView: MainView().environmentObject(store).frame(minWidth: 1050, minHeight: 680))
@@ -129,7 +225,7 @@ import XCTest
             try? FileManager.default.removeItem(at: directory)
         }
         try await settle(hosting)
-        let terminal = try XCTUnwrap(session.terminal as? LocalProcessTerminalView)
+        let terminal = try XCTUnwrap(session.terminal as? LocalTerminal)
         terminal.process.send(data: Array("trap 'exit 0' TERM; printf 'SIDEBAR_%s\\n' 'READY'\n".utf8)[...])
         try await settle(hosting)
         let generation = session.generation
@@ -261,12 +357,13 @@ import XCTest
     }
     private struct Fixture: View {
         @ObservedObject var state: Selection
+        var history: CommandHistoryStore = .shared
         var body: some View {
             GeometryReader { geometry in
                 HStack(alignment: .top, spacing: 0) {
                     Color(hex: "#1e1f29").frame(maxWidth: .infinity, maxHeight: .infinity)
                     if state.visible {
-                        TerminalToolsPanel(selection: $state.tool, isVisible: $state.visible, availableHeight: geometry.size.height)
+                        TerminalToolsPanel(selection: $state.tool, isVisible: $state.visible, history: history, availableHeight: geometry.size.height)
                     }
                 }
             }.background(Color(hex: "#1e1f29"))
@@ -294,6 +391,11 @@ import XCTest
         try JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("tools-" + name + ".json"))
         let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds)); view.cacheDisplay(in: view.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent("tools-" + name + ".png"))
+        if name.hasPrefix("audit-") {
+            let rect = NSRect(x: view.bounds.maxX - TerminalToolsPanel.width, y: view.bounds.minY, width: TerminalToolsPanel.width, height: view.bounds.height)
+            let panel = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: rect)); view.cacheDisplay(in: rect, to: panel)
+            try XCTUnwrap(panel.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent("panel-" + name + ".png"))
+        }
     }
     private struct Node {
         let object: NSObject

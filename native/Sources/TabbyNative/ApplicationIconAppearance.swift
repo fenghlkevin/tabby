@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import CoreServices
 
 @MainActor enum ApplicationIconAppearance {
     nonisolated static let styles = ["black", "white"]
@@ -20,7 +21,7 @@ import Darwin
 /// Finder custom icons live outside the signed Contents directory. Using the
 /// file's system-rendered image for the running Dock keeps both states aligned.
 /// Both choices use this path, avoiding macOS's smaller bundled-icon inset.
-/// The packaged default remains black; the selected icon survives exit.
+/// The packaged default remains black; installation restores the saved choice.
 @MainActor final class ApplicationIconController {
     let bundleURL: URL
     private let updateRunningIcon: (NSImage) -> Void
@@ -75,6 +76,8 @@ import Darwin
         fileprivate let previous: NSImage?
 
         func commit() {
+            LSRegisterURL(controller.bundleURL as CFURL, true)
+            NSWorkspace.shared.noteFileSystemChanged(controller.bundleURL.path)
             controller.updateRunningIcon(NSWorkspace.shared.icon(forFile: controller.bundleURL.path))
         }
 

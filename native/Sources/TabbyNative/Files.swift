@@ -253,7 +253,7 @@ actor RemoteFiles: FileEndpoint {
         if let existing {
             guard !existing.directory && !existing.symlink else { throw AppFailure.message("Cannot overwrite directory or symbolic link: \(destination)") }
             if job.expectation == nil {
-                let alert = AppModalAlert(); alert.messageText = "Replace \(entry.name)?"; alert.informativeText = destination
+                let alert = AppModalAlert(); alert.destructive = true; alert.cancelButtonIndex = 2; alert.defaultButtonIndex = 1; alert.messageText = "Replace \(entry.name)?"; alert.informativeText = destination
                 alert.addButton(withTitle: "Replace"); alert.addButton(withTitle: "Skip"); alert.addButton(withTitle: "Cancel transfer")
                 switch alert.runModal() { case .alertSecondButtonReturn: return; case .alertThirdButtonReturn: job.cancelled = true; throw CancellationError(); default: break }
             }

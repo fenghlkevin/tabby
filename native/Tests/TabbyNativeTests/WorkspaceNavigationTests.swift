@@ -5,6 +5,38 @@ import SwiftTerm
 @testable import TabbyNative
 
 @MainActor final class WorkspaceNavigationTests: XCTestCase {
+    func testLauncherTabIsConsumedWhenOpeningHost() async throws {
+        _ = NSApplication.shared
+        for width: CGFloat in [1050, 1400] {
+            let store = AppStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+            store.workspace.preferences.language = "zh-CN"
+            var host = TabbyNative.Host(); host.name = "标签复用验收服务器"; host.address = "fixture.invalid"
+            store.workspace.hosts = [host]
+            store.connect()
+            store.sessions[0].terminal = TerminalView(frame: .zero)
+            let preservedID = store.activeSession
+            let hosting = NSHostingView(rootView: MainView().environmentObject(store).preferredColorScheme(.light))
+            let window = show(hosting, size: NSSize(width: width, height: 900))
+            defer { window.close(); store.monitoring.stop() }
+            store.openLauncher(); try await settle(hosting)
+            XCTAssertTrue(store.newTabOpen)
+            try captureAndAudit(hosting, name: "launcher-reuse-before-\(Int(width))")
+            store.connect(host)
+            let session = try XCTUnwrap(store.sessions.last)
+            let terminal = TerminalView(frame: .zero); terminal.feed(text: "标签复用验收：当前新标签已打开 SSH 会话\r\n")
+            session.terminal = terminal
+            try await Task.sleep(for: .milliseconds(400))
+            try await settle(hosting)
+            terminal.feed(text: "标签复用验收：当前新标签已打开 SSH 会话\r\n")
+            try await settle(hosting)
+            XCTAssertFalse(store.newTabOpen)
+            XCTAssertEqual(store.sessions.count, 2)
+            XCTAssertEqual(store.sessions.first?.id, preservedID)
+            XCTAssertEqual(store.activeSession, session.id)
+            try captureAndAudit(hosting, name: "launcher-reuse-after-\(Int(width))")
+        }
+    }
+
     func testMainNavigationAndSettingsReuseOneSidebarAndPreserveTheSession() async throws {
         _ = NSApplication.shared
         let restore = enableAccessibility(); defer { restore() }
@@ -25,7 +57,7 @@ import SwiftTerm
             try assertOneWorkspaceColumn(in: hosting, expected: 10)
             try captureAndAudit(hosting, name: "workspace-sidebar-main-\(Int(width))")
 
-            for section in ["hosts", "monitoring", "credentials", "forwards", "snippets", "batchTasks", "known", "logs"] {
+            for section in ["hosts", "monitoring", "credentials", "forwards", "snippets", "batchTasks", "known", "logs", "scenes"] {
                 for pointIndex in 0..<6 {
                     let button = try navigation("axon-navigation-" + section, in: hosting)
                     try activateAtPoint(button, point: points(button)[pointIndex]); try await settle(hosting)
@@ -33,7 +65,11 @@ import SwiftTerm
                     XCTAssertTrue(try navigation("axon-navigation-" + section, in: hosting).selected)
                     try assertSessionUnchanged(session, terminal: terminal, store: store)
                 }
+                try captureAndAudit(hosting, name: "workspace-page-\(section)-\(Int(width))")
             }
+            store.openLauncher(); try await settle(hosting)
+            try captureAndAudit(hosting, name: "workspace-page-launcher-\(Int(width))")
+            store.section = "hosts"; try await settle(hosting)
 
             // Settings replaces these same rows; each activation uses a newly
             // looked-up native button after returning from settings.
@@ -51,8 +87,8 @@ import SwiftTerm
             try activateAtPoint(try navigation("axon-navigation-settings", in: hosting), point: NSPoint(x: 160, y: 41)); try await settle(hosting)
             let pageMarkers: [(PreferencesPage, String)] = [
                 (.general, "Application icon"), (.terminal, "Font & preview"), (.appearance, "Scheme library"),
-                (.keyboard, "Keyboard & mouse"), (.connection, "SSH & SFTP"), (.importHosts, "Import SSH hosts"), (.storage, "Encrypted backup"),
-                (.shortcuts, "Keyboard shortcuts"), (.about, "macOS · SwiftUI · SwiftTerm · Citadel")
+                (.keywords, "Priority: host"), (.keyboard, "Keyboard & mouse"), (.connection, "SSH & SFTP"), (.importHosts, "Import SSH hosts"), (.storage, "Encrypted backup"),
+                (.shortcuts, "Keyboard shortcuts"), (.about, "fenghlkevin")
             ]
             for (page, marker) in pageMarkers {
                 let button = try navigation("axon-preferences-page-" + page.rawValue, in: hosting)

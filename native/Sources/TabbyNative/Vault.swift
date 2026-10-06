@@ -42,7 +42,6 @@ struct CredentialsView: View {
                             IconTile(symbol: "key.fill", color: Palette.blue, size: 58)
                             Text(store.text("Add your credentials", "添加连接凭据")).font(.system(size: 17, weight: .medium))
                             Text(store.text("Save a key or identity to reuse it across hosts.", "添加私钥或密码身份，供多台主机引用。 ")).foregroundStyle(Palette.muted)
-                            Button(store.text("New identity", "新建身份")) { newCredential("password") }.buttonStyle(ChromeButtonStyle())
                         }.frame(maxWidth: .infinity).padding(30)
                     }
                 }.padding(22)
@@ -51,7 +50,7 @@ struct CredentialsView: View {
     }
     func newCredential(_ auth: String) { var value = VaultCredential(); value.auth = auth; if auth == "key" { value.keySource = "text" }; editing = value }
     func remove(_ value: VaultCredential) {
-        let alert = AppModalAlert(); alert.messageText = store.text("Remove identity?", "移除此凭据？")
+        let alert = AppModalAlert(); alert.destructive = true; alert.messageText = store.text("Remove identity?", "移除此凭据？")
         alert.informativeText = store.text("Linked hosts keep independent copies of the credentials.", "引用它的主机会保留独立凭据，不影响后续连接。")
         alert.addButton(withTitle: store.text("Remove", "移除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         if alert.runModal() == .alertFirstButtonReturn { do { try store.removeCredential(value.id) } catch { store.error = error.localizedDescription } }

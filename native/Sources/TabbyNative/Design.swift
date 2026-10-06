@@ -1,6 +1,20 @@
 import SwiftUI
 import AppKit
 
+enum AxonButtonMetrics {
+    static let radius: CGFloat = 8
+    static let actionHeight: CGFloat = 34
+}
+struct AxonSurfaceButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.contentShape(Rectangle())
+            .background(configuration.isPressed ? Palette.selected.opacity(0.45) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
+            .opacity(enabled ? 1 : 0.4)
+    }
+}
+
 struct ChromeButtonStyle: ButtonStyle {
     var prominent = false
     var accentColor: Color? = nil
@@ -8,18 +22,20 @@ struct ChromeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 12, weight: .semibold))
             .foregroundStyle(prominent ? Palette.background : Palette.text)
-            .padding(.horizontal, 14).frame(height: 34)
+            .padding(.horizontal, 14).frame(height: AxonButtonMetrics.actionHeight)
             .background(prominent ? (accentColor ?? Palette.accent) : Palette.field)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
+            .contentShape(Rectangle())
             .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.7 : 1)
     }
 }
 struct IconButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 14)).foregroundStyle(Palette.muted)
             .frame(width: 28, height: 28).contentShape(Rectangle())
-            .background(configuration.isPressed ? Palette.selected : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(configuration.isPressed ? Palette.selected : Palette.field)
+            .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius)).opacity(enabled ? 1 : 0.4)
     }
 }
 struct WorkspaceMenuItemStyle: ButtonStyle {
@@ -41,7 +57,7 @@ struct WorkspaceIconStyle: ButtonStyle {
         configuration.label.font(.system(size: 14)).foregroundStyle(Palette.chromeText)
             .frame(width: 28, height: 34).contentShape(Rectangle())
             .background(configuration.isPressed ? Color(hex: "#45475F") : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
     }
 }
 struct VaultSearchField: View {
@@ -52,7 +68,7 @@ struct VaultSearchField: View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
             TextField(placeholder, text: $text).textFieldStyle(.plain).font(.system(size: 14))
-            if !text.isEmpty { Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(Palette.muted).accessibilityLabel(store.text("Clear search", "清除搜索")) }
+            if !text.isEmpty { Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.muted).accessibilityLabel(store.text("Clear search", "清除搜索")) }
         }.padding(.horizontal, 14).frame(height: 36).background(Palette.field)
             .clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.border, lineWidth: 1))
     }
@@ -126,7 +142,7 @@ final class HostCardNativeActionButton: NSButton {
         setContentHuggingPriority(.required, for: .horizontal)
         setContentHuggingPriority(.required, for: .vertical)
         wantsLayer = true
-        layer?.cornerRadius = 7
+        layer?.cornerRadius = AxonButtonMetrics.radius
         target = self
         action = #selector(performAction)
         updateBackground(pressed: false)
@@ -185,7 +201,7 @@ struct HostCard: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     if !compact { Text(host.address).font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(1).frame(width: 180, alignment: .leading) }
                 }.frame(maxWidth: .infinity, minHeight: 60, maxHeight: 60).contentShape(Rectangle())
-            }.buttonStyle(.plain).help(store.text("Connect with one click; right-click to edit", "单击连接，右键编辑"))
+            }.buttonStyle(AxonSurfaceButtonStyle()).help(store.text("Connect with one click; right-click to edit", "单击连接，右键编辑"))
                 .accessibilityLabel(store.text("Connect to \(host.name.isEmpty ? host.address : host.name)", "连接 \(host.name.isEmpty ? host.address : host.name)"))
             HStack(spacing: 4) {
                 HostCardActionButton(symbol: host.favorite ? "star.fill" : "star", color: host.favorite ? NSColor(hex: "#EFB143") : NSColor(Palette.muted),
@@ -230,7 +246,7 @@ private struct WorkspaceTabBody<Label: View>: View {
     @State private var hovering = false
     var body: some View {
         label.font(.system(size: 13, weight: .medium)).foregroundStyle(selected ? Palette.chromeText : Color(hex: "#969BB0"))
-            .padding(.horizontal, 12).frame(height: 34).contentShape(Rectangle())
+            .padding(.horizontal, 12).frame(height: AxonButtonMetrics.actionHeight).contentShape(Rectangle())
             .background(Color(hex: selected || hovering ? "#45475F" : dark ? "#252738" : "#393C52"))
             .clipShape(RoundedRectangle(cornerRadius: 10)).opacity(pressed ? 0.75 : 1)
             .onHover { hovering = $0 }.animation(.easeOut(duration: 0.12), value: hovering)
@@ -299,8 +315,8 @@ struct KnownHostsView: View {
         }.background(Palette.background)
             .appAlert(store.text("Remove server trust?", "移除服务器信任？"), isPresented: Binding(
                 get: { removalEndpoint != nil }, set: { if !$0 { removalEndpoint = nil } }), presenting: removalEndpoint) { endpoint in
-                Button(store.text("Cancel", "取消"), role: .cancel) { removalEndpoint = nil }
-                Button(store.text("Remove trust", "移除信任"), role: .destructive) {
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) { removalEndpoint = nil }
+                AppAlertButton(store.text("Remove trust", "移除信任"), role: .destructive) {
                     _ = store.removeKnownHost(endpoint)
                     removalEndpoint = nil
                 }
@@ -368,7 +384,7 @@ struct FileToolbarButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(.horizontal, 4).frame(height: 32).contentShape(Rectangle())
             .background(configuration.isPressed ? Palette.selected : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
     }
 }
 

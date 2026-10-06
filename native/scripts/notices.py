@@ -4,7 +4,8 @@ from pathlib import Path
 import sys, shutil
 root, output = Path(sys.argv[1]), Path(sys.argv[2])
 output.mkdir(parents=True, exist_ok=True)
-for checkout in sorted((root / '.build/checkouts').iterdir()):
+for checkout in sorted(list((root / '.build/checkouts').iterdir()) + list((root / 'Vendor').iterdir())):
+    if not checkout.is_dir(): continue
     for item in checkout.iterdir():
         if item.is_file() and item.name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE')):
             destination = output / checkout.name

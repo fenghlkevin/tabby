@@ -121,8 +121,8 @@ struct GroupEditor: View {
                 } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
             }
             .appAlert(store.text("Delete group?", "删除分组？"), isPresented: $deletionOpen) {
-                Button(store.text("Cancel", "取消"), role: .cancel) {}
-                Button(store.text("Delete", "删除"), role: .destructive) {
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
+                AppAlertButton(store.text("Delete", "删除"), role: .destructive) {
                     do { try store.removeGroup(originalName); done() } catch { self.error = error.localizedDescription }
                 }
             } message: {

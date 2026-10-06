@@ -5,6 +5,7 @@ import SwiftTerm
 enum PreferencesValidation {
     static func validated(_ original: Preferences, chinese: Bool) throws -> Preferences {
         func failure(_ en: String, _ zh: String) -> AppFailure { .message(chinese ? zh : en) }
+        if let issue = ShortcutBinding.validationIssue(original, chinese: chinese) { throw AppFailure.message(issue) }
         var value = original
         guard (100...50000).contains(value.commandHistoryLimit), value.keywordRules.count <= 64 else { throw failure("History limit must be 100–50000; up to 64 keyword rules", "历史保留数须为 100–50000；关键词规则最多 64 条") }
         for rule in value.keywordRules { _ = try rule.expression() }
@@ -128,7 +129,7 @@ enum TerminalPaste {
         iconChange?.commit()
         if Bundle.main.bundleIdentifier == "org.tabby.native" { CommandHistoryStore.shared.trim(to: value.commandHistoryLimit) }
         if value.commandCompletionNotifications && !previous.preferences.commandCompletionNotifications { CommandCompletionNotification.requestPermission() }
-        for session in sessions { if let terminal = session.terminal { TerminalAppearance.apply(value, to: terminal) } }
+        for session in sessions { if let terminal = session.terminal { TerminalAppearance.apply(value, to: terminal); session.applyFontSize() } }
     }
 
     func applyApplicationIconAtLaunch() {

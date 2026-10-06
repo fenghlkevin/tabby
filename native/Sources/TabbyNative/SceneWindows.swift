@@ -50,6 +50,7 @@ enum SceneWorkspaceMerge {
 
 @MainActor final class SceneWindowController: NSWindowController, NSWindowDelegate {
     private static var windows: [String: SceneWindowController] = [:]
+    static func shortcutStore(for window: NSWindow) -> AppStore? { windows.values.first { $0.window === window }?.store }
     static var focusedStore: AppStore? { windows.values.first { $0.window === NSApp.keyWindow || $0.window === NSApp.keyWindow?.sheetParent || $0.window === NSApp.mainWindow }?.store }
     let store: AppStore
     private weak var parentStore: AppStore?

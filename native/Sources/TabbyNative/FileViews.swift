@@ -169,10 +169,10 @@ struct FilePaneView: View {
                 } else {
                     ScrollView(.horizontal) {
                         HStack(spacing: 9) {
-                            Button("/") { Task { await pane.navigate("/") } }.buttonStyle(.plain)
+                            Button("/") { Task { await pane.navigate("/") } }.buttonStyle(AxonSurfaceButtonStyle())
                             ForEach(Array(fileBreadcrumbs(pane.path).enumerated()), id: \.offset) { index, component in
                                 if index > 0 { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.muted) }
-                                Button { Task { await pane.navigate(component.path) } } label: { HStack(spacing: 6) { Image(systemName: "folder.fill").foregroundStyle(Color(hex: "#65CDF5")); Text(component.name).lineLimit(1) } }.buttonStyle(.plain)
+                                Button { Task { await pane.navigate(component.path) } } label: { HStack(spacing: 6) { Image(systemName: "folder.fill").foregroundStyle(Color(hex: "#65CDF5")); Text(component.name).lineLimit(1) } }.buttonStyle(AxonSurfaceButtonStyle())
                             }
                         }.padding(.vertical, 8)
                     }.scrollIndicators(.hidden)
@@ -199,7 +199,7 @@ struct FilePaneView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
             TextField(store.text("Filter", "筛选"), text: $pane.filter).textFieldStyle(.plain).frame(maxWidth: .infinity)
-            Button { pane.filter = ""; showingFilter = false } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(Palette.muted).help(store.text("Clear filter", "清除筛选")).accessibilityLabel(store.text("Clear filter", "清除筛选"))
+            Button { pane.filter = ""; showingFilter = false } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.muted).help(store.text("Clear filter", "清除筛选")).accessibilityLabel(store.text("Clear filter", "清除筛选"))
         }.font(.system(size: 14)).foregroundStyle(Palette.text)
     }
     func openEntry(_ entry: FileEntry) {
@@ -262,7 +262,7 @@ struct FilePaneView: View {
     func rename(_ entry: FileEntry) { guard let name = prompt(store.text("Rename", "重命名"), value: entry.name) else { return }; let base = (entry.path as NSString).deletingLastPathComponent; action { let destination = try remoteJoin(base, name); guard destination != entry.path else { return }; guard try await fileIfExists(destination, backend: pane.backend) == nil else { throw AppFailure.message(store.text("Name already exists", "名称已存在")) }; try await pane.backend.rename(entry.path, destination) } }
     func chmod(_ entry: FileEntry) { guard let value = prompt(store.text("Permissions (octal)", "权限（八进制）"), value: String(entry.permissions, radix: 8)), let mode = UInt32(value, radix: 8), mode <= 0o7777 else { return }; action { try await pane.backend.chmod(entry.path, mode) } }
     func delete(_ entries: [FileEntry]) {
-        let alert = AppModalAlert(); alert.messageText = store.text("Delete \(entries.count) items?", "删除 \(entries.count) 项？")
+        let alert = AppModalAlert(); alert.destructive = true; alert.messageText = store.text("Delete \(entries.count) items?", "删除 \(entries.count) 项？")
         alert.informativeText = endpointIsRemote ? store.text("Remote deletion is permanent.", "远程文件将永久删除。") : store.text("Local files will move to Trash.", "本地文件将移到废纸篓。")
         alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -345,10 +345,7 @@ struct SFTPHostPicker: View {
                 Image(systemName: "tray.full.fill")
                 Text(store.text("Local vault", "本地主机库")).font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Menu(group.isEmpty ? store.text("All groups", "全部分组") : group) {
-                    Button(store.text("All groups", "全部分组")) { group = "" }
-                    ForEach(store.groups, id: \.self) { value in Button(value) { group = value } }
-                }.menuStyle(.borderlessButton).fixedSize().tint(Palette.text)
+                AxonChoiceField(selection: $group, choices: [("", store.text("All groups", "全部分组"))] + store.groups.map { ($0, $0) }, placeholder: store.text("All groups", "全部分组"), symbol: "folder", identifier: "axon-sftp-host-group").frame(width: 180)
             }.padding(.horizontal, 22).padding(.bottom, 16)
             VaultSearchField(placeholder: store.text("Search hosts or tags", "搜索主机或标签"), text: $search).focused($searchFocused).padding(.horizontal, 20).padding(.bottom, 16)
             if !model.status.isEmpty { Text(model.status).font(.system(size: 12)).foregroundStyle(Palette.muted).padding(.horizontal, 22).padding(.bottom, 12) }

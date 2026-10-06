@@ -42,8 +42,9 @@ struct GroupSettingToggle: NSViewRepresentable {
     var identifier: String
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(checkboxWithTitle: title, target: context.coordinator, action: #selector(Coordinator.toggle(_:)))
-        button.font = NSFont.systemFont(ofSize: 11); button.controlSize = .small
+        let button = AxonCheckboxNativeButton()
+        button.target = context.coordinator; button.action = #selector(Coordinator.toggle(_:)); button.title = title
+        button.font = NSFont.systemFont(ofSize: 11); button.setButtonType(.switch); button.isBordered = false
         return button
     }
     func updateNSView(_ button: NSButton, context: Context) {
@@ -57,5 +58,17 @@ struct GroupSettingToggle: NSViewRepresentable {
     @MainActor final class Coordinator: NSObject {
         var choose: (Bool) -> Void = { _ in }
         @objc func toggle(_ sender: NSButton) { choose(sender.state == .on) }
+    }
+}
+
+final class AxonCheckboxNativeButton: NSButton {
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(state == .on ? Palette.selected : Palette.sidebar).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        AxonSelectionDrawing.mark(in: NSRect(x: 6, y: (bounds.height - 14) / 2, width: 14, height: 14), selected: state == .on, enabled: isEnabled)
+        let text = title as NSString
+        let attributes: [NSAttributedString.Key: Any] = [.font: font ?? NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor(Palette.text).withAlphaComponent(isEnabled ? 1 : 0.45)]
+        text.draw(at: NSPoint(x: 28, y: (bounds.height - text.size(withAttributes: attributes).height) / 2), withAttributes: attributes)
     }
 }

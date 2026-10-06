@@ -102,8 +102,7 @@ final class BinaryChoiceView: NSView {
         secondButton.frame = NSRect(x: inset + width + gap, y: inset, width: width, height: max(0, bounds.height - inset * 2))
     }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(Palette.field).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+
     }
     @objc private func choose(_ button: NSButton) {
         guard button.isEnabled, values.indices.contains(button.tag) else { return }
@@ -163,17 +162,14 @@ final class BinaryChoiceButton: NSButton {
     }
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let background = selected ? NSColor(Palette.accent) : NSColor(Palette.field)
-        background.withAlphaComponent(isEnabled ? (cell?.isHighlighted == true ? 0.7 : 1) : 0.45).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
-        let foreground = selected ? NSColor.white : NSColor(Palette.text)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: selected ? .semibold : .regular),
-            .foregroundColor: foreground.withAlphaComponent(isEnabled ? 1 : 0.45)
-        ]
+        NSColor(selected ? Palette.selected : Palette.sidebar).withAlphaComponent(isEnabled ? 1 : 0.45).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
+        AxonSelectionDrawing.mark(in: NSRect(x: 10, y: (bounds.height - 14) / 2, width: 14, height: 14), selected: selected, enabled: isEnabled)
+        let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor(Palette.text).withAlphaComponent(isEnabled ? 1 : 0.45), .paragraphStyle: paragraph]
         let text = title as NSString
-        let size = text.size(withAttributes: attributes)
-        text.draw(at: NSPoint(x: max(0, (bounds.width - size.width) / 2), y: (bounds.height - size.height) / 2), withAttributes: attributes)
+        let height = text.size(withAttributes: attributes).height
+        text.draw(in: NSRect(x: 34, y: (bounds.height - height) / 2, width: max(0, bounds.width - 44), height: height), withAttributes: attributes)
         if window?.firstResponder === self && isEnabled {
             NSColor(Palette.accent).setStroke()
             let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 5, yRadius: 5)

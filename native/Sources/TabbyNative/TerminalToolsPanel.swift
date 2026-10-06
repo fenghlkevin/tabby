@@ -23,6 +23,7 @@ struct TerminalToolsPanel: View {
     @EnvironmentObject var store: AppStore
     @Binding var selection: String
     @Binding var isVisible: Bool
+    var history: CommandHistoryStore = .shared
     let availableHeight: CGFloat
 
     private var bodyHeight: CGFloat { max(0, availableHeight - Self.headerHeight - 1) }
@@ -43,6 +44,7 @@ struct TerminalToolsPanel: View {
                     .padding(Self.contentPadding)
                     .accessibilityIdentifier("axon-terminal-tools-content-" + selection)
             }
+            .id(selection)
             .scrollBounceBehavior(.basedOnSize)
             .frame(height: bodyHeight)
         }
@@ -98,7 +100,7 @@ struct TerminalToolsPanel: View {
     @ViewBuilder private var content: some View {
         switch selection {
         case "history":
-            CommandHistoryPanel()
+            CommandHistoryPanel(history: history)
         case "snippets":
             SnippetTerminalPanel(sessionID: store.activeSession, scrollsInternally: false)
         case "status":
@@ -113,7 +115,9 @@ struct TerminalToolsPanel: View {
     private var sessionTools: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(store.text("Quick actions", "快捷操作")).font(.system(size: 14, weight: .semibold))
-            sessionAction(store.text("Split terminal", "终端分屏"), symbol: "rectangle.split.2x1") { store.split() }
+            TerminalGroupControls()
+            if let session { SessionLogControls(session: session) }
+            Rectangle().fill(TerminalChrome.border.opacity(0.6)).frame(height: 1).padding(.vertical, 4)
             sessionAction(store.text("Find in terminal", "搜索终端"), symbol: "magnifyingglass") {
                 let item = NSMenuItem()
                 item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
@@ -140,7 +144,7 @@ struct TerminalToolsPanel: View {
                 .font(.system(size: 10)).foregroundStyle(TerminalChrome.muted).fixedSize(horizontal: false, vertical: true)
             if let session {
                 Toggle(store.text("Follow reported directories in Files", "文件面板跟随上报目录"), isOn: Binding(get: { session.followDirectoryInFiles }, set: { session.followDirectoryInFiles = $0 }))
-                    .toggleStyle(.checkbox).font(.system(size: 11)).disabled(!session.connected)
+                    .toggleStyle(AxonCheckboxStyle(terminal: true)).font(.system(size: 11)).disabled(!session.connected)
                 Text(store.text("Only this session. Following keeps your current view open.", "仅作用于此会话，跟随时保留当前视图。"))
                     .font(.system(size: 10)).foregroundStyle(TerminalChrome.muted)
             }
@@ -163,14 +167,16 @@ struct TerminalToolsPanel: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(TerminalChrome.border.opacity(0.45), lineWidth: 1))
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(AxonSurfaceButtonStyle())
     }
 
     private var terminalSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(store.text("Font & cursor", "字体与光标")).font(.system(size: 12)).foregroundStyle(TerminalChrome.muted)
-            Text(store.workspace.preferences.fontName + " · " + TerminalFontSizeNativeEditor.display(store.workspace.preferences.fontSize) + " pt")
+            Text(store.workspace.preferences.fontName + " · " + TerminalFontSizeNativeEditor.display(session?.effectiveFontSize ?? store.workspace.preferences.fontSize) + " pt")
                 .font(.system(size: 14, weight: .medium))
+            if let session { TerminalFontControls(session: session) }
+            Text(store.text("Adjust this terminal only", "仅调整当前终端")).font(.system(size: 11)).foregroundStyle(TerminalChrome.muted)
             TerminalPanelActionButton(title: store.text("Font & cursor settings", "字体与光标设置"), identifier: "axon-terminal-open-font-settings") {
                 isVisible = false; store.openPreferences(.terminal)
             }.frame(height: 36)
@@ -206,7 +212,7 @@ final class TerminalToolsToggleNativeButton: PreferencesRectNativeButton {
     override func draw(_ dirtyRect: NSRect) {
         if selected || hovering || isHighlighted {
             NSColor(selected ? TerminalChrome.accent.opacity(0.16) : TerminalChrome.border).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: bounds, xRadius: AxonButtonMetrics.radius, yRadius: AxonButtonMetrics.radius).fill()
         }
         if let image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 14, weight: .regular)) {
             let tinted = image.withSymbolConfiguration(.init(paletteColors: [NSColor(selected ? TerminalChrome.accent : TerminalChrome.text)])) ?? image
@@ -239,7 +245,7 @@ final class TerminalToolNativeButton: PreferencesRectNativeButton {
     override func draw(_ dirtyRect: NSRect) {
         if selected || hovering || isHighlighted {
             NSColor(selected ? TerminalChrome.accent.opacity(isHighlighted ? 0.12 : 0.16) : TerminalChrome.card.opacity(isHighlighted ? 0.72 : 1)).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
+            NSBezierPath(roundedRect: bounds, xRadius: AxonButtonMetrics.radius, yRadius: AxonButtonMetrics.radius).fill()
         }
         let foreground = NSColor(selected ? TerminalChrome.accent : TerminalChrome.muted)
         if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 15, weight: .medium)) {

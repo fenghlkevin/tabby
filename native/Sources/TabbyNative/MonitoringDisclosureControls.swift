@@ -59,7 +59,7 @@ final class MonitoringDisclosureNativeButton: PreferencesRectNativeButton {
     override func draw(_ dirtyRect: NSRect) {
         NSColor(hovering || isHighlighted ? Palette.selected : Palette.field)
             .withAlphaComponent(isEnabled ? (isHighlighted ? 0.75 : 1) : 0.4).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
+        NSBezierPath(roundedRect: bounds, xRadius: AxonButtonMetrics.radius, yRadius: AxonButtonMetrics.radius).fill()
         let foreground = NSColor(Palette.text).withAlphaComponent(isEnabled ? 1 : 0.45)
         if let image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold)) {

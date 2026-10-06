@@ -10,7 +10,13 @@ import Crypto
 final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
     let endpoint: String
     let store: AppStore
-    init(endpoint: String, store: AppStore) { self.endpoint = endpoint; self.store = store }
+    let certificateAuthorityConfigured: Bool
+    init(endpoint: String, store: AppStore, certificateAuthorityConfigured: Bool = false) { self.endpoint = endpoint; self.store = store; self.certificateAuthorityConfigured = certificateAuthorityConfigured }
+    func validateHostCertificate(hostKey: NIOSSHPublicKey, certifiedKey: NIOSSHCertifiedPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        // NIOSSH has already checked configured CA, host principal, expiry and signature.
+        guard certificateAuthorityConfigured else { validationCompletePromise.fail(AgentWire.failure); return }
+        validationCompletePromise.succeed(())
+    }
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         let encoded = String(openSSHPublicKey: hostKey)
         let bytes = encoded.split(separator: " ").dropFirst().first.flatMap { Data(base64Encoded: String($0)) } ?? Data()
@@ -31,7 +37,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     }
 }
 
-@MainActor final class TerminalSession: ObservableObject, Identifiable, TerminalViewDelegate, LocalProcessTerminalViewDelegate {
+@MainActor final class TerminalSession: ObservableObject, Identifiable, TerminalViewDelegate {
     private static var nextCreationOrder: UInt64 = 0
     let id = UUID()
     let creationOrder: UInt64
@@ -53,6 +59,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     @Published var followDirectoryInFiles = false {
         didSet { store.objectWillChange.send() }
     }
+    @Published var transcriptID: UUID?
     var commandHistoryStore: CommandHistoryStore?
     var commandHistoryToken = ""
     var activeCommandHistoryID: UUID?
@@ -74,6 +81,21 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     var client: SSHClient?
     private var jumpClients: [SSHClient] = []
     var writer: TTYStdinWriter?
+    @Published private(set) var fontSizeOverride: Double? {
+        didSet { store.objectWillChange.send() }
+    }
+    var effectiveFontSize: Double { fontSizeOverride ?? store.workspace.preferences.fontSize }
+    func setFontSize(_ size: Double?) {
+        if let size, !size.isFinite { return }
+        fontSizeOverride = size.map { min(40, max(10, $0)) }
+        applyFontSize()
+    }
+    func adjustFontSize(_ delta: Double) { setFontSize(effectiveFontSize + delta) }
+    func applyFontSize() {
+        guard let terminal else { return }
+        let size = effectiveFontSize
+        terminal.font = NSFont(name: store.workspace.preferences.fontName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: .light)
+    }
     var terminal: TerminalView?
     var task: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
@@ -126,19 +148,20 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         let view: TerminalView
         if host == nil {
             let local = LocalTerminal(frame: .zero, font: font, options: options)
-            local.processDelegate = self
-            local.store = store; local.sessionID = id
+            local.terminalDelegate = self
+            local.store = store; local.sessionID = id; local.ownerSession = self
             view = local
         } else {
             let remote = RemoteTerminal(frame: .zero, font: font, options: options)
-            remote.store = store; remote.sessionID = id
+            remote.store = store; remote.sessionID = id; remote.ownerSession = self
             remote.terminalDelegate = self
             view = remote
         }
         TerminalAppearance.apply(pref, to: view)
         terminal = view
+        applyFontSize()
         KeywordOverlay.attach(to: view, store: store, sessionID: id)
-        if let local = view as? LocalProcessTerminalView {
+        if let local = view as? LocalTerminal {
             localProcessGeneration = generation
             let launch = LocalTerminalLaunch(preferences: pref)
             var env = ProcessInfo.processInfo.environment
@@ -156,6 +179,19 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         // Reload saved auth metadata so remembered choices apply on reconnect.
         let saved = GroupDefaults.connectionSource(original, workspace: store.workspace)
         let source = try ConnectionValidation.host(saved, workspace: store.workspace, chinese: store.chinese)
+        SSHCertificates.registerRSA()
+        let authority = try source.hostCertificateAuthorityPath.flatMap { $0.isEmpty ? nil : try SSHCertificates.publicKey($0) }
+        if source.auth == "agent" {
+            let path = try AgentWire.socketPath(source)
+            resolvedSettingsHosts[original.id] = source
+            var settings = SSHClientSettings(host: source.address, port: source.port,
+                authenticationMethod: { .custom(AgentAuthentication(username: source.username, path: path, fingerprint: source.agentFingerprint, certificatePath: source.certificatePath, authorityPath: source.certificateAuthorityPath)) },
+                hostKeyValidator: .custom(HostKeyCheck(endpoint: "\(source.address):\(source.port)", store: store, certificateAuthorityConfigured: authority != nil)))
+            settings.trustedHostCAKeys = authority.map { [$0] } ?? []
+            settings.connectTimeout = .seconds(Int64(max(1, min(120, store.workspace.preferences.sshConnectTimeout))))
+            settings.algorithms.publicKeyAlgorihtms = .add([(Insecure.RSA.PublicKey.self, Insecure.RSA.Signature.self), (Insecure.RSA.PublicKey.self, Insecure.RSA.SHA256Signature.self)])
+            return settings
+        }
         let secretID = store.groupSecretID(for: saved)
         let material = Secrets.Value(secret: try Secrets.readChecked(secretID),
                                      privateKey: source.auth == "key" && source.keySource == "text" ? try Secrets.readPrivateKey(secretID) : "")
@@ -217,9 +253,10 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         let host = result.host
         let auth = try result.authentication(chinese: store.chinese)
         resolvedSettingsHosts[original.id] = host
-        var settings = SSHClientSettings(host: host.address, port: host.port, authenticationMethod: { auth }, hostKeyValidator: .custom(HostKeyCheck(endpoint: "\(host.address):\(host.port)", store: store)))
+        var settings = SSHClientSettings(host: host.address, port: host.port, authenticationMethod: { auth }, hostKeyValidator: .custom(HostKeyCheck(endpoint: "\(host.address):\(host.port)", store: store, certificateAuthorityConfigured: authority != nil)))
+        settings.trustedHostCAKeys = authority.map { [$0] } ?? []
         settings.connectTimeout = .seconds(Int64(max(1, min(120, store.workspace.preferences.sshConnectTimeout))))
-        settings.algorithms.publicKeyAlgorihtms = .add([(Insecure.RSA.PublicKey.self, Insecure.RSA.Signature.self)])
+        settings.algorithms.publicKeyAlgorihtms = .add([(Insecure.RSA.PublicKey.self, Insecure.RSA.Signature.self), (Insecure.RSA.PublicKey.self, Insecure.RSA.SHA256Signature.self)])
         return settings
     }
     func settingsUsername(for host: Host) -> String {
@@ -277,7 +314,15 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
                     connection = next
                 }
                 guard let connection else { return }
+                client = connection
                 if usesPersistentSession { try await preparePersistentSession(connection) }
+                if settingsHost(for: host).forwardAgent == true {
+                    let socket = try AgentWire.socketPath(settingsHost(for: host))
+                    guard let fingerprint = settingsHost(for: host).agentFingerprint else { throw AppFailure.message("Select an Agent identity before forwarding / 请先选择转发的 Agent 身份") }
+                    let identities = try await Task.detached { try AgentWire.identities(path: socket).filter { $0.fingerprint == fingerprint } }.value
+                    guard identities.count == 1 else { throw AgentWire.failure }
+                    connection.enableAgentForwarding { channel in channel.pipeline.addHandler(AgentForwardingHandler(path: socket, identities: identities)) }
+                }
                 client = connection; status = store.text("Opening terminal…", "正在打开终端…")
                 try await connection.withPTY(.init(wantReply: true, term: "xterm-256color", terminalCharacterWidth: 100, terminalRowHeight: 30, terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:]))) { output, input in
                     guard request == generation, !Task.isCancelled else { throw CancellationError() }
@@ -312,7 +357,8 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
                             try Task.checkCancellation()
                             guard request == generation else { throw CancellationError() }
                             switch event {
-                            case .stdout(let bytes), .stderr(let bytes): terminal?.feed(byteArray: Array(bytes.readableBytesView)[...])
+                            case .stdout(let bytes), .stderr(let bytes):
+                                let output = Array(bytes.readableBytesView); captureOutput(output); terminal?.feed(byteArray: output[...])
                             }
                         }
                         outputFinished = true
@@ -359,6 +405,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         terminal?.feed(text: "\r\n\(status)\r\n")
     }
     func disconnect() {
+        stopTranscript(); store.synchronizationEnabled = false
         generation += 1; localProcessGeneration = nil
         currentDirectory = nil
         authenticationWindow?.cancel()
@@ -368,15 +415,17 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         commandHistoryStartupTask?.cancel(); commandHistoryStartupTask = nil
         endCommandHistoryBootstrapScreen()
         task?.cancel(); task = nil; writer = nil; connected = false; connectionInProgress = false
-        if let local = terminal as? LocalProcessTerminalView { local.terminate() }
+        if let local = terminal as? LocalTerminal { local.terminate() }
         let clients = jumpClients + (client.map { [$0] } ?? [])
         client = nil; jumpClients = []
         Task { for c in clients.reversed() { try? await c.close() } }
     }
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { columns = newCols; rows = newRows; Task { try? await writer?.changeSize(cols: newCols, rows: newRows, pixelWidth: 0, pixelHeight: 0) } }
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        columns = newCols; rows = newRows
+        (source as? LocalTerminal)?.resizeProcess(columns: newCols, rows: newRows)
+        Task { try? await writer?.changeSize(cols: newCols, rows: newRows, pixelWidth: 0, pixelHeight: 0) }
+    }
     func setTerminalTitle(source: TerminalView, title: String) { if host == nil && !title.isEmpty { self.title = title } }
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) { if host == nil && !title.isEmpty { self.title = title } }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         guard source === terminal, connected else { return }
         if receiveCommandHistory(directory) { return }
@@ -400,15 +449,25 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         connectionEnded(request: request, error: AppFailure.message(store.text("Process launch failed: \(error)", "进程启动失败：\(error)")))
     }
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        guard source === terminal else { return }
+        if store.sessions.contains(where: { $0 === self }) { store.dispatchUserInput(from: id, bytes: Array(data)) }
+        else { writeInput(Array(data)) }
+    }
+    func writeInput(_ data: [UInt8]) {
+        guard connected else { return }
+        let local = terminal as? LocalTerminal
         let bytes = ByteBuffer(bytes: data)
         let previous = inputTask; let startup = commandHistoryStartupTask; let input = writer; let request = generation
         inputTask = Task {
             await previous?.value
             await startup?.value
             guard !Task.isCancelled, request == generation else { return }
-            do { try await input?.write(bytes) }
+            do { if let local { local.process.send(data: data[...]) } else { try await input?.write(bytes) } }
             catch { if request == generation { status = error.localizedDescription } }
         }
+    }
+    func writeBootstrapInput(_ bytes: [UInt8]) {
+        if let local = terminal as? LocalTerminal { local.process.send(data: bytes[...]) }
     }
     func scrolled(source: TerminalView, position: Double) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
@@ -429,7 +488,15 @@ extension Optional {
 
 @MainActor class RemoteTerminal: TerminalView {
     weak var store: AppStore?
+    weak var ownerSession: TerminalSession?
     var sessionID: UUID?
+    nonisolated override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        let bytes = Array(data)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.ownerSession?.writeInput(bytes)
+        }
+    }
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); focusAttachedTerminal(self, store: store, sessionID: sessionID) }
     override func mouseDown(with event: NSEvent) { if let sessionID { store?.activeSession = sessionID }; super.mouseDown(with: event) }
     override func paste(_ sender: Any) {
@@ -456,32 +523,48 @@ extension Optional {
     override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); if store?.workspace.preferences.copyOnSelect == true, getSelection()?.isEmpty == false { copy(self) } }
     override func otherMouseDown(with event: NSEvent) { if event.buttonNumber == 2 && store?.workspace.preferences.middleClickPaste != false { paste(self) } else { super.otherMouseDown(with: event) } }
 }
-@MainActor class LocalTerminal: LocalProcessTerminalView {
-    weak var store: AppStore?
-    var sessionID: UUID?
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); focusAttachedTerminal(self, store: store, sessionID: sessionID) }
-    override func mouseDown(with event: NSEvent) { if let sessionID { store?.activeSession = sessionID }; super.mouseDown(with: event) }
-    override func paste(_ sender: Any) {
-        let text = NSPasteboard.general.string(forType: .string) ?? ""
-        TerminalPaste.perform(text, preferences: store?.workspace.preferences ?? Preferences(), confirm: { TerminalPaste.confirm($0, chinese: store?.chinese == true, window: window) }, send: pasteText)
+/// The app owns the local PTY transport so local and SSH terminals share the
+/// same input router and transcript capture, without patching SwiftTerm.
+@MainActor final class LocalTerminal: RemoteTerminal {
+    private let bridge = LocalTerminalProcessBridge()
+    lazy var process = LocalProcess(delegate: bridge, dispatchQueue: .main)
+    func startProcess(executable: String, args: [String], environment: [String], currentDirectory: String?) {
+        bridge.terminal = self
+        let dimensions = terminalStateSnapshot().dimensions
+        resizeProcess(columns: dimensions.cols, rows: dimensions.rows)
+        process.startProcess(executable: executable, args: args, environment: environment, currentDirectory: currentDirectory)
     }
-    override func rightMouseDown(with event: NSEvent) { if store?.workspace.preferences.rightClickPaste == true { paste(self) } else { super.rightMouseDown(with: event) } }
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = super.menu(for: event)?.copy() as? NSMenu ?? NSMenu()
-        if getSelection()?.isEmpty == false {
-            if !menu.items.isEmpty { menu.addItem(.separator()) }
-            let item = NSMenuItem(title: store?.text("Locate selected path in Files", "在文件面板定位所选路径") ?? "Locate selected path in Files", action: #selector(openSelectedPathInFiles), keyEquivalent: "")
-            item.target = self; menu.addItem(item)
+    func terminate() { process.terminate() }
+    func resizeProcess(columns: Int, rows: Int) {
+        var size = winsize(ws_row: UInt16(clamping: rows), ws_col: UInt16(clamping: columns), ws_xpixel: 0, ws_ypixel: 0)
+        bridge.setSize(size); _ = process.updateWindowSize(&size)
+    }
+    func receive(_ bytes: [UInt8]) {
+        ownerSession?.captureOutput(bytes)
+        feed(byteArray: bytes[...])
+    }
+}
+private final class LocalTerminalProcessBridge: LocalProcessDelegate {
+    weak var terminal: LocalTerminal?
+    private let lock = NSLock()
+    private var size = winsize(ws_row: 30, ws_col: 100, ws_xpixel: 0, ws_ypixel: 0)
+    func setSize(_ value: winsize) { lock.lock(); size = value; lock.unlock() }
+    func getWindowSize() -> winsize { lock.lock(); defer { lock.unlock() }; return size }
+    func dataReceived(slice: ArraySlice<UInt8>) {
+        MainActor.assumeIsolated { terminal?.receive(Array(slice)) }
+    }
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        MainActor.assumeIsolated {
+            guard let terminal else { return }
+            terminal.ownerSession?.processTerminated(source: terminal, exitCode: exitCode)
         }
-        return menu.items.isEmpty ? nil : menu
     }
-    @objc private func openSelectedPathInFiles() {
-        guard let store, let sessionID else { return }
-        do { try store.openTerminalDirectoryInFiles(sessionID: sessionID, isSelection: true) }
-        catch { store.error = error.localizedDescription }
+    func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        MainActor.assumeIsolated {
+            guard let terminal else { return }
+            terminal.ownerSession?.processFailedToStart(source: terminal, error: error)
+        }
     }
-    override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); if store?.workspace.preferences.copyOnSelect == true, getSelection()?.isEmpty == false { copy(self) } }
-    override func otherMouseDown(with event: NSEvent) { if event.buttonNumber == 2 && store?.workspace.preferences.middleClickPaste != false { paste(self) } else { super.otherMouseDown(with: event) } }
 }
 
 @MainActor private func focusAttachedTerminal(_ view: TerminalView, store: AppStore?, sessionID: UUID?) {

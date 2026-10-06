@@ -66,9 +66,9 @@ struct CloudBackupPreferencesPane: View {
         VStack(alignment: .leading, spacing: 18) {
             BackupCard(title: store.text("Encrypted backup", "加密备份"), symbol: "lock.shield") {
                 PreferencesSecureField(title: store.text("Backup password (at least 8 characters)", "备份密码（至少 8 位）"), text: $password, identifier: "axon-cloud-password", chinese: store.chinese).appInput()
-                Toggle(store.text("Create a new file for every backup", "每次备份生成新文件"), isOn: $settings.createNewFile).accessibilityIdentifier("axon-cloud-new-file")
+                Toggle(store.text("Create a new file for every backup", "每次备份生成新文件"), isOn: $settings.createNewFile).toggleStyle(AxonCheckboxStyle()).accessibilityIdentifier("axon-cloud-new-file")
                 Text(store.text("Applies to manual and automatic backups. New files include a timestamp and unique ID; older backups are retained.", "同时用于手动和自动备份；新文件名包含时间和唯一标识，保留历史备份。关闭时自动备份更新固定的最新文件。" )).font(.caption).foregroundStyle(Palette.muted)
-                Toggle(store.text("Include passwords and pasted private keys", "携带密码与粘贴的私钥"), isOn: $includeSecrets)
+                Toggle(store.text("Include passwords and pasted private keys", "携带密码与粘贴的私钥"), isOn: $includeSecrets).toggleStyle(AxonCheckboxStyle())
                     .accessibilityIdentifier("axon-cloud-include-secrets")
                 Text(store.text("Manual and automatic backups share this password and credential option. Backups are encrypted locally; the password is never sent to storage. Enabling automatic backup and saving remembers it in this Mac's Keychain. Restore asks for the original backup password separately. Private-key files, logs and recent history are excluded.", "手动与自动备份共用这里的密码和携带凭据选项。备份先在本机加密，密码不发送给存储服务；启用自动备份并保存设置后，会记在本机钥匙串中。恢复时单独输入原备份密码。私钥文件不复制，日志和最近记录不备份。" )).foregroundStyle(Palette.muted)
                 if busy { ProgressView().controlSize(.small) }
@@ -118,7 +118,7 @@ struct CloudBackupPreferencesPane: View {
         HStack(spacing: 12) { Text(title).foregroundStyle(Palette.muted).frame(width: 125, alignment: .leading); TextField(placeholder, text: value).appInput().accessibilityIdentifier("axon-cloud-field-" + title) }
     }
     private func action(_ title: String, _ id: String, prominent: Bool = false, enabled: Bool = true, run: @escaping () -> Void) -> some View {
-        PreferencesActionButton(title: title, identifier: id, prominent: prominent, enabled: enabled, action: run).frame(width: 144, height: 38).disabled(!enabled)
+        PreferencesActionButton(title: title, identifier: id, prominent: prominent, enabled: enabled, action: run).frame(maxWidth: .infinity).frame(height: 38).disabled(!enabled)
     }
     private func load() {
         do {

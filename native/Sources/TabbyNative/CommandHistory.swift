@@ -22,9 +22,20 @@ enum CommandHistoryProtocol {
               let command = String(data: data, encoding: .utf8) else { return nil }
         return command
     }
+    /// Only identify Axon's reserved hook setup, not user commands that mention
+    /// the hook (for example grep, cat or printf while troubleshooting).
+    static func isInternalIntegration(_ command: String) -> Bool {
+        let value = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("_axon_history_") { return true }
+        if value.hasPrefix("add-zsh-hook ") && value.contains(" _axon_history_") { return true }
+        if value.hasPrefix("if [ -n \"${ZSH_VERSION-}\" ]") && value.contains("add-zsh-hook preexec _axon_history_emit") && value.contains("_axon_history_report ready") { return true }
+        if value.hasPrefix("if ! [[ \"${PROMPT_COMMAND[*]-}\"") && value.contains("_axon_history_finish") { return true }
+        if value.hasPrefix("if declare -p PROMPT_COMMAND") && value.contains("PROMPT_COMMAND=(_axon_history_finish") { return true }
+        return value.hasPrefix("if [ -z \"$(trap -p DEBUG)\" ]") && value.contains("trap '_axon_history_begin")
+    }
     static func allowed(_ command: String) -> Bool {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, command.utf8.count <= 8192, !command.contains("axon-command;"), !trimmed.hasPrefix("_axon_"),
+        guard !trimmed.isEmpty, command.utf8.count <= 8192, !command.contains("axon-command;"), !trimmed.hasPrefix("_axon_"), !isInternalIntegration(command),
               !command.unicodeScalars.contains(where: { $0.value < 32 && $0 != "\n" && $0 != "\t" }) else { return false }
         let pattern = #"(?i)(password|passwd|passphrase|secret|token|authorization|api[_-]?key)\s*[:=]|--?(password|passwd|passphrase|token|secret|api-key)\b|\bsshpass\b|\b(mysql|redis-cli)\b.*\s-p\S|\b(export\s+)?[A-Z_]*(PASSWORD|TOKEN|SECRET|API_KEY)[A-Z_]*="#
         return trimmed.range(of: pattern, options: .regularExpression) == nil
@@ -40,7 +51,12 @@ enum CommandHistoryProtocol {
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TabbyNative/command-history.json")
         if FileManager.default.fileExists(atPath: self.fileURL.path) {
-            do { entries = Array(try JSONDecoder().decode([ExecutedCommand].self, from: Data(contentsOf: self.fileURL)).prefix(50000)) }
+            do {
+                let saved = try JSONDecoder().decode([ExecutedCommand].self, from: Data(contentsOf: self.fileURL))
+                let visible = saved.filter { !CommandHistoryProtocol.isInternalIntegration($0.command) }
+                entries = Array(visible.prefix(50000))
+                if visible.count != saved.count { persist() }
+            }
             catch { self.error = "Could not read command history: \(error.localizedDescription)" }
         }
     }
@@ -120,7 +136,7 @@ enum CommandHistoryProtocol {
             self.beginCommandHistoryBootstrapScreen()
             for line in script.components(separatedBy: "\n") {
                 guard let terminal, self.connected, self.generation == request, !Task.isCancelled else { return }
-                terminal.send(data: Array((line + "\r").utf8)[...])
+                self.writeBootstrapInput(Array((line + "\r").utf8))
                 try? await Task.sleep(for: .milliseconds(2))
             }
             for _ in 0..<20 {
@@ -156,13 +172,15 @@ enum CommandHistoryProtocol {
         guard !excluded.contains(where: { command.localizedCaseInsensitiveContains($0) }) else { activeCommandHistoryID = nil; return true }
         let entry = ExecutedCommand(hostID: host?.id, hostName: host?.name ?? store.text("Local terminal", "本地终端"), sessionID: id, command: command)
         history.append(entry, limit: store.workspace.preferences.commandHistoryLimit); activeCommandHistoryID = entry.id
+        if let id = transcriptID { store.sessionLogs.marker(entry, report: report, id: id) }
         return true
     }
 }
 
 struct CommandHistoryPanel: View {
     @EnvironmentObject var store: AppStore
-    @ObservedObject var history = CommandHistoryStore.shared
+    @ObservedObject var history: CommandHistoryStore
+    init(history: CommandHistoryStore = .shared) { self.history = history }
     @State private var query = ""
     @State private var allHosts = false
     @State private var clearing = false
@@ -177,8 +195,8 @@ struct CommandHistoryPanel: View {
             Text(store.text("Recording starts automatically for Bash/Zsh. View by server in Logs → Operation history. Interactive password input is not captured.", "Bash/Zsh 打开后自动记录。在「日志 → 操作历史」按服务器查看，不采集交互密码输入。"))
                 .font(.system(size: 11)).foregroundStyle(TerminalChrome.muted)
             TextField(store.text("Search command or host", "搜索命令或主机"), text: $query).textFieldStyle(.plain).padding(.horizontal, 10).frame(height: 34).foregroundStyle(TerminalChrome.text).background(TerminalChrome.field).clipShape(RoundedRectangle(cornerRadius: 8))
-            Toggle(store.text("All hosts", "所有主机"), isOn: $allHosts)
-            Toggle(store.text("Failed commands only", "仅失败命令"), isOn: $failedOnly)
+            Toggle(store.text("All hosts", "所有主机"), isOn: $allHosts).toggleStyle(AxonCheckboxStyle(terminal: true))
+            Toggle(store.text("Failed commands only", "仅失败命令"), isOn: $failedOnly).toggleStyle(AxonCheckboxStyle(terminal: true))
             HStack { Text("\(entries.count)").foregroundStyle(TerminalChrome.muted); Spacer(); Button(store.text("Clear history", "清空历史"), role: .destructive) { clearing = true } }
             if let error = history.error { Text(error).font(.system(size: 11)).foregroundStyle(.red) }
             if entries.isEmpty { Text(store.text("No recorded commands", "暂无已记录命令")).foregroundStyle(TerminalChrome.muted) }
@@ -189,6 +207,7 @@ struct CommandHistoryPanel: View {
                     CommandHistoryMetadata(entry: entry).font(.system(size: 10)).foregroundStyle(TerminalChrome.muted)
                     HStack {
                         Button(store.text("Copy", "复制")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(entry.command, forType: .string) }
+                        Button(store.text("Locate output", "定位输出")) { if store.sessionLogs.locate(entry) { store.section = "logs" } }.buttonStyle(ChromeButtonStyle()).disabled(!store.sessionLogs.records.contains { $0.markers.contains { $0.id == entry.id } })
                         Button(store.text("Insert", "填入")) {
                             guard let session, let terminal = session.terminal else { return }
                             do { let bytes = try SnippetInput.bytes(entry.command, action: .insert, bracketedPaste: terminal.terminalStateSnapshot().bracketedPasteMode, chinese: store.chinese); terminal.send(data: bytes[...]) } catch { store.error = error.localizedDescription }
@@ -198,8 +217,8 @@ struct CommandHistoryPanel: View {
             }
             if entries.count > limit { Button(store.text("Load more", "加载更多")) { limit += 100 }.buttonStyle(ChromeButtonStyle()) }
         }.appAlert(store.text("Clear all command history?", "清空所有命令历史？"), isPresented: $clearing) {
-            Button(store.text("Clear", "清空"), role: .destructive) { history.clear() }
-            Button(store.text("Cancel", "取消"), role: .cancel) {}
+            AppAlertButton(store.text("Clear", "清空"), role: .destructive) { history.clear() }
+            AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
         } message: { Text(store.text("This removes the locally recorded commands for all hosts.", "这会删除本机记录的所有主机命令。")) }
     }
 }
@@ -207,7 +226,7 @@ private struct CommandHistoryControls: View {
     @ObservedObject var session: TerminalSession
     var body: some View {
         if session.commandHistoryReady {
-            Toggle(session.store.text("Record commands", "记录命令"), isOn: $session.commandHistoryRecording)
+            Toggle(session.store.text("Record commands", "记录命令"), isOn: $session.commandHistoryRecording).toggleStyle(AxonCheckboxStyle(terminal: true))
         } else {
             Text(session.store.text("Initializing automatic recording…", "正在初始化自动记录…")).font(.caption).foregroundStyle(TerminalChrome.muted)
         }
@@ -217,11 +236,14 @@ private struct CommandHistoryControls: View {
 
 struct OperationHistoryView: View {
     @EnvironmentObject var store: AppStore
-    @ObservedObject private var history = CommandHistoryStore.shared
+    @ObservedObject private var history: CommandHistoryStore
     @State private var server: String?
     @State private var failedOnly = false
     @State private var search = ""
     @State private var clearing = false
+    init(history: CommandHistoryStore = .shared, server: String? = nil) {
+        _history = ObservedObject(wrappedValue: history); _server = State(initialValue: server)
+    }
     private func key(_ entry: ExecutedCommand) -> String { entry.hostID?.uuidString ?? "local" }
     private var filtered: [ExecutedCommand] { history.entries.filter { (!failedOnly || ($0.exitCode != nil && $0.exitCode != 0)) && (server == nil || key($0) == server) && (search.isEmpty || $0.command.localizedCaseInsensitiveContains(search) || $0.hostName.localizedCaseInsensitiveContains(search)) } }
     private var servers: [String] { Array(Set(filtered.map(key))).sorted { lhs, rhs in
@@ -233,10 +255,10 @@ struct OperationHistoryView: View {
                 if server != nil { Button { server = nil } label: { Label(store.text("All servers", "全部服务器"), systemImage: "chevron.left") }.buttonStyle(ChromeButtonStyle()) }
                 Text(server.flatMap { value in history.entries.first { key($0) == value }?.hostName } ?? store.text("Operation history", "操作历史")).font(.system(size: 18, weight: .semibold))
                 Spacer()
-                Toggle(store.text("Failed only", "仅失败"), isOn: $failedOnly)
+                Toggle(store.text("Failed only", "仅失败"), isOn: $failedOnly).toggleStyle(AxonCheckboxStyle()).fixedSize(horizontal: true, vertical: false)
                 Button(store.text("Clear all history", "清空全部历史"), role: .destructive) { clearing = true }.buttonStyle(ChromeButtonStyle()).disabled(history.entries.isEmpty)
             }
-            Text(store.text("Automatically records Bash/Zsh shell commands, grouped by server. Latest 1,000 entries on this Mac; password prompts are excluded.", "自动记录 Bash/Zsh 命令，按服务器查看。本机保留最近 1,000 条，不采集密码提示中的输入。" )).font(.system(size: 12)).foregroundStyle(Palette.muted)
+            Text(store.text("Records Bash/Zsh commands by server. Axon initialization scripts and password input are excluded.", "自动记录 Bash/Zsh 命令，按服务器查看；不记录 Axon 初始化脚本和密码提示中的输入。" )).font(.system(size: 12)).foregroundStyle(Palette.muted)
             VaultSearchField(placeholder: store.text("Search server or command", "搜索服务器或命令"), text: $search)
             if let error = history.error { Text(error).foregroundStyle(.red) }
             ScrollView {
@@ -255,7 +277,7 @@ struct OperationHistoryView: View {
                                     if let date = entries.first?.date { Text(date, format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(Palette.muted) }
                                     Image(systemName: "chevron.right").foregroundStyle(Palette.muted)
                                 }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12)).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(AxonSurfaceButtonStyle())
                         }
                     } else {
                         ForEach(filtered) { entry in
@@ -263,6 +285,7 @@ struct OperationHistoryView: View {
                                 Text(entry.date, format: .dateTime.year().month().day().hour().minute().second()).font(.system(size: 12)).foregroundStyle(Palette.muted).frame(width: 160, alignment: .leading)
                                 VStack(alignment: .leading, spacing: 6) { Text(entry.command).font(.system(size: 13, design: .monospaced)).textSelection(.enabled); CommandHistoryMetadata(entry: entry) }.frame(maxWidth: .infinity, alignment: .leading)
                                 Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(entry.command, forType: .string) } label: { Label(store.text("Copy", "复制"), systemImage: "doc.on.doc") }.buttonStyle(ChromeButtonStyle())
+                                Button(store.text("Locate output", "定位输出")) { if store.sessionLogs.locate(entry) { store.section = "logs" } }.buttonStyle(ChromeButtonStyle()).disabled(!store.sessionLogs.records.contains { $0.markers.contains { $0.id == entry.id } })
                                 Button(store.text("Insert", "填入")) { insert(entry) }.buttonStyle(ChromeButtonStyle()).disabled(target(entry) == nil)
                             }.padding(14).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
                         }
@@ -271,8 +294,8 @@ struct OperationHistoryView: View {
                 }
             }
         }.padding(22).appAlert(store.text("Clear all command history?", "清空所有操作历史？"), isPresented: $clearing) {
-            Button(store.text("Cancel", "取消"), role: .cancel) {}
-            Button(store.text("Clear", "清空"), role: .destructive) { history.clear() }
+            AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
+            AppAlertButton(store.text("Clear", "清空"), role: .destructive) { history.clear() }
         } message: { Text(store.text("Removes all saved command history on this Mac.", "删除本机保存的全部命令历史。")) }
     }
     private func target(_ entry: ExecutedCommand) -> TerminalSession? { store.sessions.first { $0.connected && $0.host?.id == entry.hostID } }

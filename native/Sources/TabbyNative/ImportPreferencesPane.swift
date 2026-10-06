@@ -26,9 +26,8 @@ struct ImportPreferencesPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             BackupCard(title: store.text("Import SSH hosts", "导入 SSH 主机"), symbol: "square.and.arrow.down") {
-                Picker(store.text("Source format", "来源格式"), selection: $importFormat) {
-                    ForEach(HostImportFormat.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.onChange(of: importFormat) { _, _ in selectedFile = nil; document = nil; review = nil; message = "" }
+                Text(store.text("Source format", "来源格式")).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+                AxonChoiceField(selection: $importFormat, choices: HostImportFormat.allCases.map { ($0, $0.title) }, placeholder: store.text("Source format", "来源格式"), symbol: "doc.text", identifier: "axon-importFormat").frame(maxWidth: 320).onChange(of: importFormat) { _, _ in selectedFile = nil; document = nil; review = nil; message = "" }
                 Text(store.text("Tabby YAML, OpenSSH config, Termius-compatible CSV and PuTTY registry exports.", "支持 Tabby YAML、OpenSSH config、Termius 兼容 CSV 和 PuTTY 注册表导出。" )).foregroundStyle(Palette.muted)
                 fileLabel(selectedFile)
                 HStack(spacing: 10) {
@@ -43,9 +42,8 @@ struct ImportPreferencesPane: View {
                 result("import")
             }
             BackupCard(title: store.text("Export SSH hosts", "导出 SSH 主机"), symbol: "square.and.arrow.up") {
-                Picker(store.text("Export format", "导出格式"), selection: $exportFormat) {
-                    ForEach(HostExportFormat.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
+                Text(store.text("Export format", "导出格式")).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+                AxonChoiceField(selection: $exportFormat, choices: HostExportFormat.allCases.map { ($0, $0.title) }, placeholder: store.text("Export format", "导出格式"), symbol: "doc.text", identifier: "axon-exportFormat").frame(maxWidth: 320)
                 Text(store.text("Exports all \(store.workspace.hosts.count) hosts using their effective connection settings, including groups and jump hosts where the format allows. Passwords and private-key contents are excluded.", "导出全部 \(store.workspace.hosts.count) 台主机的有效连接配置；按格式保留分组与跳板关系。不含密码和私钥内容。" )).foregroundStyle(Palette.muted)
                 action(store.text("Export hosts…", "导出主机…"), "axon-export-hosts", enabled: !store.workspace.hosts.isEmpty, run: exportHosts)
                 Text(store.text("CSV preserves groups and tags; OpenSSH uses generated aliases and does not preserve group or tag labels. Hosts using pasted keys need credentials reconfigured after import.", "CSV 保留分组与标签；OpenSSH 使用生成的别名，不保留分组与标签。使用文本私钥的主机迁移后需要重新配置凭据。" )).font(.system(size: 11)).foregroundStyle(Palette.muted)
@@ -53,10 +51,10 @@ struct ImportPreferencesPane: View {
             }
             BackupCard(title: store.text("Axon workspace backup", "Axon 工作区备份"), symbol: "externaldrive") {
                 Text(store.text("Preserves hosts, groups, identities, forwards, snippets, themes and preferences. Logs and recent history are excluded. Restore replaces the current workspace after confirmation and keeps a local backup.", "保留主机、分组、凭据元数据、转发、片段、主题与设置，不含日志和最近记录。确认恢复后替换当前工作区，同时保留本地备份。" )).foregroundStyle(Palette.muted)
-                Toggle(store.text("Encrypt backup", "加密备份"), isOn: $encrypted)
+                Toggle(store.text("Encrypt backup", "加密备份"), isOn: $encrypted).toggleStyle(AxonCheckboxStyle())
                     .accessibilityIdentifier("axon-backup-encryption")
                     .onChange(of: encrypted) { _, value in if !value { includeSecrets = false } }
-                Toggle(store.text("Include passwords and pasted private keys", "携带密码与粘贴的私钥"), isOn: $includeSecrets).disabled(!encrypted)
+                Toggle(store.text("Include passwords and pasted private keys", "携带密码与粘贴的私钥"), isOn: $includeSecrets).toggleStyle(AxonCheckboxStyle()).disabled(!encrypted)
                 PreferencesSecureField(title: store.text("Backup password (at least 8 characters)", "备份密码（至少 8 位）"), text: $password, identifier: "axon-backup-password", chinese: store.chinese).appInput()
                 HStack(spacing: 10) {
                     action(store.text("Save backup…", "保存备份…"), "axon-backup-export", enabled: !encrypted || password.count >= 8, run: exportArchive)
@@ -172,7 +170,7 @@ enum BackupPresentation {
         return (values.filter { !$0.secret.isEmpty }.count, values.filter { !$0.privateKey.isEmpty }.count)
     }
     @MainActor static func confirmRestore(_ archive: WorkspaceArchive, store: AppStore) -> Bool {
-        let alert = AppModalAlert(); alert.alertStyle = .warning
+        let alert = AppModalAlert(); alert.destructive = true; alert.alertStyle = .warning
         alert.messageText = store.text("Restore this workspace backup?", "恢复此工作区备份？")
         let counts = credentialCounts(archive)
         let hasCredentials = counts.passwords > 0 || counts.privateKeys > 0

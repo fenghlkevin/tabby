@@ -347,19 +347,28 @@ struct DirectoryComparisonSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(store.text("Compare directories", "比较目录")).font(.system(size: 20, weight: .semibold))
             Text(model.sourceRoot + "  →  " + model.targetRoot).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-            HStack(alignment: .top) {
-                Toggle(store.text("Include hidden files", "包含隐藏文件"), isOn: $model.includeHidden).disabled(model.scanning)
-                TextField(store.text("Ignore patterns, separated by commas or lines", "忽略规则，用逗号或换行分隔"), text: $model.ignoreText, axis: .vertical)
-                    .appInput().lineLimit(2...3).disabled(model.scanning)
-            }
-            Text(store.text("Exact comparison reads file contents. Target-only files are kept. Symbolic links are skipped.", "精确比较会读取文件内容。保留仅目标存在的文件，不跟随符号链接。"))
-                .font(.caption).foregroundStyle(Palette.muted)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(store.text("Comparison options", "比较选项")).font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Toggle(store.text("Include hidden files", "包含隐藏文件"), isOn: $model.includeHidden)
+                        .toggleStyle(AxonCheckboxStyle()).fixedSize().disabled(model.scanning)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(store.text("Ignore rules", "忽略规则")).font(.system(size: 12, weight: .medium))
+                    TextField(store.text("File or directory names, separated by commas or lines", "文件或目录名称，用逗号或换行分隔"), text: $model.ignoreText, axis: .vertical)
+                        .appInput().lineLimit(2...3).disabled(model.scanning)
+                        .accessibilityLabel(store.text("Ignore rules", "忽略规则"))
+                }
+                Text(store.text("Exact comparison reads file contents. Target-only files are kept. Symbolic links are skipped.", "精确比较会读取文件内容。保留仅目标存在的文件，不跟随符号链接。"))
+                    .font(.caption).foregroundStyle(Palette.muted)
+            }.padding(14).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
             HStack {
                 Button(store.text("Compare", "开始比较")) { model.start() }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(model.scanning)
                 if model.scanning { Button(store.text("Cancel comparison", "取消比较")) { model.cancel() }.buttonStyle(ChromeButtonStyle()); ProgressView().controlSize(.small) }
                 Spacer()
-                Toggle(store.text("Show identical", "显示相同项"), isOn: $showIdentical)
-                Button(store.text("Select differences", "选择差异")) { model.selected = Set(model.rows.filter { $0.difference.transferable }.map(\.id)) }.disabled(!model.complete)
+                Toggle(store.text("Show identical", "显示相同项"), isOn: $showIdentical).toggleStyle(AxonCheckboxStyle())
+                Button(store.text("Select differences", "选择差异")) { model.selected = Set(model.rows.filter { $0.difference.transferable }.map(\.id)) }.buttonStyle(ChromeButtonStyle()).disabled(!model.complete)
             }
             if model.scanning {
                 Text("\(model.scannedCount) " + store.text("entries", "项") + " · " + ByteCountFormatter.string(fromByteCount: Int64(clamping: model.bytesRead), countStyle: .file) + " · " + model.currentPath)
@@ -370,8 +379,8 @@ struct DirectoryComparisonSheet: View {
                     ForEach(shown) { row in
                         HStack(spacing: 9) {
                             Button { if !model.selected.insert(row.id).inserted { model.selected.remove(row.id) } } label: {
-                                Image(systemName: model.selected.contains(row.id) ? "checkmark.square.fill" : "square")
-                            }.buttonStyle(.plain).disabled(!row.difference.transferable)
+                                AxonSelectionMark(selected: model.selected.contains(row.id))
+                            }.buttonStyle(AxonSurfaceButtonStyle()).disabled(!row.difference.transferable)
                             Image(systemName: row.source?.directory == true || row.target?.directory == true ? "folder" : "doc")
                             Text(row.relativePath).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
                             Spacer()
@@ -394,8 +403,8 @@ struct DirectoryComparisonSheet: View {
             .onChange(of: model.includeHidden) { _, _ in model.invalidateResults() }
             .onChange(of: model.ignoreText) { _, _ in model.invalidateResults() }
             .appAlert(store.text("Apply this transfer plan?", "执行此传输计划？"), isPresented: $confirming) {
-                Button(store.text("Cancel", "取消"), role: .cancel) {}
-                Button(store.text("Start transfer", "开始传输")) {
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
+                AppAlertButton(store.text("Start transfer", "开始传输")) {
                     do { try model.submit(); model.close(); dismiss() } catch { model.error = error.localizedDescription }
                 }
             } message: {

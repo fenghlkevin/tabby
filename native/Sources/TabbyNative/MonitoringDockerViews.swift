@@ -25,7 +25,7 @@ struct MonitoringDockerView: View {
                 HStack {
                     Text(store.text("\(snapshot.containers.count) sampled containers · read-only", "已采样 \(snapshot.containers.count) 个容器 · 只读" )).font(.system(size: 11)).foregroundStyle(Palette.muted)
                     Spacer(minLength: 10)
-                    Toggle(store.text("Hide not running", "隐藏未运行容器"), isOn: $hideNotRunning).toggleStyle(.checkbox).font(.system(size: 12))
+                    Toggle(store.text("Hide not running", "隐藏未运行容器"), isOn: $hideNotRunning).toggleStyle(AxonCheckboxStyle()).font(.system(size: 12))
                         .accessibilityIdentifier("axon-docker-hide-not-running")
                 }
                 if hideNotRunning { Text(store.text("Showing \(visible.count) running containers", "显示 \(visible.count) 个运行中容器")).font(.system(size: 11)).foregroundStyle(Palette.muted) }
@@ -44,7 +44,7 @@ struct MonitoringDockerView: View {
                                 MonitoringValue(label: "↑ / ↓", value: "\(MonitoringPresentation.bytes(container.networkTransmittedBytes)) / \(MonitoringPresentation.bytes(container.networkReceivedBytes))")
                                 HStack { Text(store.text("Resource details", "资源明细")); Spacer(); Image(systemName: "chevron.right") }.font(.system(size: 11)).foregroundStyle(Palette.muted)
                             }.contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityLabel(store.text("Container details: \(container.name)", "容器详情：\(container.name)"))
+                        }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel(store.text("Container details: \(container.name)", "容器详情：\(container.name)"))
                     }
                 }
             }

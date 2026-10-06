@@ -6,7 +6,7 @@ let package = Package(
     products: [.executable(name: "TabbyNative", targets: ["TabbyNative"])],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", branch: "main"),
-        .package(url: "https://github.com/orlandos-nl/Citadel.git", branch: "main"),
+        .package(path: "Vendor/Citadel"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
     ],
     targets: [

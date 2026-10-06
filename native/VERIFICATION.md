@@ -1,4 +1,290 @@
+## 2026-10-06 — 0.10.27 (122)：启动页搜索直接显示服务器
+
+- 非空搜索不再展示分组文件夹；根目录搜索跨全部分组直接列出匹配主机，标题为匹配的主机。匹配名称、地址、有效账号、标签及分组名；分组内搜索保留当前范围。清空后恢复分组浏览。
+- LauncherTests 8 项及 OperationsWorkspaceUITests/testLauncherSearchShowsMatchingGroupedHostsDirectly 1 项通过。真实文本编辑输入 160、清空、再次输入；检查 1050 / 1400pt 原生截图，无分组文件夹，两组中的匹配主机直接显示。
+- 已打开观察截图：native/dist/ui-0.10.27/launcher-host-search-1050.png 和 launcher-host-search-1400.png。未连接测试或用户服务器。
+- Release 打包、严格签名、ZIP、安装版本和可执行文件 SHA-256 校验通过。已安装 /Applications/Axon.app 0.10.27 (122)。旧版备份 native/dist/backups/Axon-0.10.26-20261006-142536.app。
+- 未重启应用，用户主动重启后加载新版；现有会话未操作。
+
+## 2026-10-06 — 0.10.26 (121)：最后一个分屏恢复默认字号
+
+- 分屏组从两个缩减为一个时清除剩余终端的字号覆盖，恢复当前全局默认值。关闭和分离路径共用此逻辑；4→3→2 不重置，已经独立的终端不受影响。
+- 3 项测试通过：TerminalFontSizeTests 两项、OperationsWorkspaceUITests/testPaneFontControlsAdjustOnlyTheirTerminal。真实无障碍点击关闭三个分屏，最后终端从 13pt 恢复 19pt。
+- 已打开观察原生 NSHostingView 截图 native/dist/ui-0.10.26/last-pane-font-reset.png。使用缓存 RemoteTerminal 夹具，未连接用户服务器。
+- Release 打包、严格签名、ZIP、安装版本和可执行文件 SHA-256 校验通过。已安装 /Applications/Axon.app 0.10.26 (121)。
+- 旧版备份：native/dist/backups/Axon-0.10.25-20261006-142052.app。未重启应用或操作现有会话，用户主动重启后加载新版。
+
+## 2026-10-06 — 安装 0.10.25 (120)
+
+- 用户明确授权安装后，已备份旧版 0.10.22 到 native/dist/backups/Axon-0.10.22-20261006-141355.app。
+- 已在临时安装目录复制、恢复用户选择的图标并校验后，原子替换 /Applications/Axon.app；安装后版本、可执行文件 SHA-256、严格签名及 ZIP 校验通过。
+- 未退出或重启当前应用；当前进程仍需用户主动重启才能加载新版。现有会话未操作。
+
+## 2026-10-06 — 0.10.25 (120)：全屏关闭主窗口
+
+- 原逻辑对全屏窗口直接 orderOut，可能留下空全屏空间；现在等待 windowDidExitFullScreen 后隐藏。进入/退出动画中关闭使用待隐藏状态；重复关闭不重复切换；Dock 重新打开取消待隐藏。系统退出失败时保留可见窗口，原 SwiftUI delegate 回调继续转发。
+- MainWindowLifecycleTests：5 项通过，真实全屏测试 1 项跳过。覆盖退出前不隐藏、退出后隐藏、连续点击关闭、重新打开取消隐藏、草稿与本地真实 Shell / 转发任务保留。
+- 已尝试 XCTest 主窗口、独立 AppKit 进程及 .app 包真实全屏；当前宿主未进入 fullScreen 状态（entered=false），因此不能宣称全屏空间退出动画及返回桌面已实测通过。
+- 独立原生窗口隐藏/恢复截图已打开观察：/private/tmp/axon-fullscreen-probe.png；结果 /private/tmp/axon-fullscreen-probe-result.txt。此截图只证明普通窗口恢复，不证明真实全屏流程。
+- Release 打包、严格 codesign 及 ZIP 完整性校验通过：native/dist/Axon-0.10.25-mac-arm64.zip。
+- 未安装或重启现有 Axon；未操作用户 SSH/SFTP 会话。
+
+## 2026-10-06 — 0.10.24 (119)：当前终端实时字号
+
+- 每个 TerminalSession 保留独立会话字号，10–40pt；实时更新 SwiftTerm 字体和终端行列数。恢复默认后跟随全局字号，修改全局字体保留已有会话覆盖值。
+- 分屏标题栏提供 − / 当前字号（重置） / +；右侧字体面板和终端菜单也提供入口。默认快捷键 ⌘=、⌘−、⌘0，支持自定义，作用于当前窗口所选终端。
+- 9 项测试通过：TerminalFontSizeTests、OperationsWorkspaceUITests/testPaneFontControlsAdjustOnlyTheirTerminal、ShortcutPreferencesTests。覆盖独立字号、边界、非有限输入、恢复默认、全局设置更新、列数增加、按钮实际无障碍点击与快捷键路由。
+- 已打开观察真实 NSHostingView 四分屏截图（1050 / 1400pt）：native/dist/ui-0.10.24/pane-font-1050.png、pane-font-1400.png。控件无裁切，显示 19 / 18 / 13 / 19 独立字号。测试使用 RemoteTerminal 夹具，未连接用户服务器，未执行远程命令。
+- Release 打包、严格 codesign 校验和 ZIP 完整性检查通过：native/dist/Axon-0.10.24-mac-arm64.zip。
+- 未安装到 /Applications，未重启运行中的应用，未操作现有 SSH/SFTP 会话。
+
+## 2026-10-06 — 0.10.23 (118)：新标签复用
+
+- 将新标签占位状态归入 AppStore；从启动页打开 SSH / 本地终端时同步消耗占位标签，切换主机库保留它。
+- LauncherTests：8 项通过，覆盖 SSH、本地终端、已有会话保留与启动页切换。
+- WorkspaceNavigationTests/testLauncherTabIsConsumedWhenOpeningHost：通过。在真实 NSHostingView 中检查 1050 / 1400pt 窗口，已有会话保留，新会话成为当前标签，占位标签消失。等待布局动画结束后打开观察截图，标签和加号无重叠。
+- 截图：/private/tmp/axon-launcher-reuse/launcher-reuse-{before,after}-{1050,1400}.png。使用缓存终端测试夹具，未连接用户服务器，未验证真实 SSH 登录。
+- Release 打包完成；打包脚本严格 codesign 验证通过，ZIP 完整性检查通过。
+- 未安装到 /Applications，未重启当前应用；运行中的窗口及会话未操作。
+
 # 验证记录
+
+## 0.10.22 最近 SSH 每次新建独立会话
+
+按用户选择，最近打开 SSH 调用 connect 创建独立会话；保留最新主机／共享身份解析。最近记录测试 14 项：13 通过、1 本地 SSH 服务 fixture 未配置跳过；实际最近页面渲染及筛选测试 1 项通过，截图已打开观察。未对用户服务器执行命令。证据 native/dist/ui-0.10.22/。
+
+Release、发行包严格签名、ZIP、安装版本与二进制散列通过。已覆盖安装 0.10.22／117，white 图标保留，无备份无重启。安装签名使用只去除根 Finder 图标元数据的临时副本核验，保留 Contents。
+
+## 0.10.21 最近打开 Local 类型标签
+
+本地终端类型标签统一为 Local。RecentFilterUITests 通过，700／1050pt 实际渲染与筛选点击检查通过，已打开 1050pt 截图观察。证据 native/dist/ui-0.10.21/。
+
+Release、发行包严格签名、ZIP、安装版本和二进制散列核验通过。已覆盖安装 0.10.21／116，white 图标保留，无备份无重启。安装签名使用清除包根 Finder 图标元数据的临时副本，保留 Contents。
+
+## 0.10.20 标签拖拽窗口锁定生命周期
+
+mouseUp 不再提前恢复窗口 isMovable，原生 draggingSession ended 回调完成后恢复。5 项 WorkspaceSessionTabTests 全部通过，涵盖拖拽阈值、抬起后继续锁定／结束后恢复、窗口 frame 不变、关闭／工具点击、排序与合并、不同宽度完整命中区域。实际 SwiftUI/AppKit 标签选中和未选中截图已打开观察。测试拖拽启动使用记录替身，未用实体鼠标执行完整系统拖拽，不能视为系统手势端到端验收。证据 native/dist/ui-0.10.20/。
+
+Release、严格签名、ZIP 及安装版本／二进制散列验证通过。已直接覆盖安装 0.10.20／115，white 图标保留，无备份、无重启。安装签名使用仅去除包根 Finder 图标元数据的临时副本核验，Contents 保留。
+
+## 0.10.19 单终端分屏标题栏残留修复
+
+SessionWorkspace 直接观察 AppStore 分屏组变化，最后一屏关闭或分离后即刻隐藏 32pt 标题栏。真实 SwiftUI/AppKit 测试通过，覆盖两屏→分离→重新分组→关闭，断言终端增高 32pt、原实例不变。三张实际截图已打开检查。测试出现已有 Connections.swift:154 视图更新期间发布警告，无失败。证据 native/dist/ui-0.10.19/。
+
+Release、ZIP、严格签名及安装版本／二进制散列验证通过。已覆盖安装 0.10.19／114，保留 white 图标，无备份、无重启。安装签名采用仅剔除包根 Finder 图标元数据的临时副本验证，全部 Contents 保留。
+
+## 0.10.18 右侧五页签可见性验收
+
+日期：2026-10-06；构建 113。修复会话页跟随目录勾选项浅底浅字，采用 TerminalChrome 深色变体；切换页签重建滚动视图并回到顶部，避免继承上一页滚动位置。
+
+五项 TerminalToolsLayoutTests 全部通过，无跳过；追加有数据五页签截图测试再次通过（重复测试，不计为新的独立用例）。覆盖 1050×550、1400×900，逐页点击、顶部重置、文档宽度及滚动末端，30 条片段、30 条隔离历史和本地监控样本。已打开实际渲染截图检查会话、状态、片段、历史、外观顶部与底部，文字及末尾操作可见；片段卡片两行省略为预览设计。未记录输出时定位按钮、单终端下同步按钮禁用属于业务状态。已有真实工作区测试出现 Connections.swift:154 视图更新期间发布警告，测试通过。截图和日志：native/dist/ui-0.10.18/。
+
+Release、发行包严格签名、ZIP 完整性及安装版本／二进制散列核验通过。已直接覆盖安装 0.10.18／113，保留 white 图标，无备份、无重启。安装签名使用仅剔除根 Finder 图标元数据的临时副本验证，保留全部 Contents。ZIP SHA-256：`3b1f639b6b71fe8496176e5127113ea94a981ec2132b98dcea5705b609baf6cc`。
+
+## 0.10.17 日志长行滚动范围修复
+
+日期：2026-10-06；构建 112。会话日志记录原始输出的去控制序列文本，并非截图。复现 NSTextView 文档宽度等于 500pt 可视宽度，但实际长行布局超过 13000pt，水平滚动无法覆盖内容。新增 TranscriptScrollView 按实际文字布局和可视区设置文档宽高，去除宽度自动约束；更新及 resize 都重新计算，原文本与定位偏移不改变。
+
+2 项真实 AppKit／SwiftUI 测试全部通过，覆盖 200 行中文超长输出完整保留、横纵滚动到末列末行及原有点击定位／重复定位／实时内容回归。完整滚动后截图已打开观察，证据 `native/dist/ui-0.10.17/`。无法补回命令本身未输出的数据；top 等全屏应用按终端尺寸输出，文本日志仍不回放光标动作。本次未改变采集逻辑或调用远程命令。
+
+Release、发行包严格签名与 ZIP 检查通过；安装后在只剔除包根 Finder 图标元数据的临时副本核验签名，全部 Contents 保留，版本与二进制散列通过。已直接覆盖安装 0.10.17／112，保留 white 图标，无备份、无重启。ZIP SHA-256：`6bdc79903c01b0e22c3cc43ea3b8dd7efec71fb4cfc8263c4df6cdc4e641663e`。
+
+## 0.10.16 定位输出页签导航修复
+
+日期：2026-10-06；构建 111。原日志页仅 onAppear 根据 selectedID 切换页签，从已打开的操作历史定位时没有切换。日志导航内容直接观察 SessionLogStore，每次定位发出独立请求，明确切到会话输出；同一命令重复点击也响应。输出视图定位时重读记录，清除阻挡目标日志的筛选，并应用命令字节位置。
+
+11 项测试全部通过、0 跳过；实际 SwiftUI 无障碍按钮路径从服务器卡片进入历史、点击定位输出，断言输出视图出现、记录与命令选中、文本与光标位置正确；返回历史再次定位同一命令，以及追加实时内容后定位刷新。使用隔离本地日志与历史，不执行远程命令。实际完整截图已打开观察，证据 `native/dist/ui-0.10.16/`。
+
+Release 构建、发行包严格签名与 ZIP 检查通过；安装签名采用剔除包根 Finder 图标元数据的临时副本核验，全部签名 Contents 保留。已直接覆盖 `/Applications/Axon.app` 为 0.10.16／111，版本、二进制散列核验通过，保留 white 图标，无备份、无重启。ZIP SHA-256：`1c7b7e7c06988a5b968a0ee991a96b320ebc4c2540befcc3e0992237d414fab2`。
+
+## 0.10.15 深色历史工具勾选项对比修复
+
+日期：2026-10-06；构建 110。公共 AxonCheckboxStyle 明确指定浅色页面文字色，新增 terminal 深色变体；历史工具的记录命令／所有主机／仅失败命令采用 TerminalChrome 文字、卡片及输入背景，避免浅底浅字。颜色均来自现有主题，不改变选择语义。
+
+16 项工具布局／选择菜单／历史回归通过，追加 1 项隔离历史数据渲染验收通过；完整截图已打开检查记录启用／关闭、筛选项、真实记录及会话／外观页签。1050／1400pt 工具面板切换与滚动沿用已有测试覆盖。证据 `native/dist/ui-0.10.15/`。
+
+Release、发行包严格签名与 ZIP 检查通过；安装包使用上版已验证的清理 Finder 自定义元数据副本进行签名核验，版本与二进制散列通过。已直接覆盖 `/Applications/Axon.app` 为 0.10.15／110，保留 white 图标，无备份、无重启。ZIP SHA-256：`c1ba56ba3d70a24a7e77650d9e7f05a7e97d9f738d0772ff1e8b2bcf6016101a`；安装记录 `native/dist/installation-0.10.15.txt`。
+
+## 0.10.14 目录比较选项与安装后图标
+
+日期：2026-10-06；构建 109。目录比较选项改为 Axon 白色圆角卡片：紧凑隐藏文件勾选、独立忽略规则标签和输入、弱化说明；选择差异按钮采用统一圆角样式。安装脚本读取保存的图标设置，替换前后写入应用包外的 Finder 自定义图标并刷新 LaunchServices，避免覆盖安装后必须启动才恢复白色图标。运行中图标提交也刷新系统登记；不修改签名 Contents，不重启 Dock 或 Axon。
+
+24 项相关测试全部通过、0 跳过，包括安装辅助脚本在未启动隔离应用时恢复白色图标、实际像素与 Contents 散列检查、设置失败回滚、目录比较逻辑与真实弹框交互。完整目录比较截图和启动前白图标截图已打开观察，证据 `native/dist/ui-0.10.14/`。
+
+已直接覆盖安装 `/Applications/Axon.app` 为 0.10.14／109，恢复实际保存的 white 选择，未启动／退出 Axon 或重启 Dock。实际安装应用的系统图标截图 `native/dist/ui-0.10.14/installed-file-icon.png` 已打开观察为白底黑标。发行包严格签名与 ZIP 校验通过；安装后的 Finder 自定义元数据会使直接 strict 校验报额外元数据，因此在只去除根目录 `Icon\r` 与 FinderInfo 的临时副本上执行严格签名核验，保留全部签名 Contents；版本与二进制散列也核验通过。ZIP SHA-256：`0962320ad8e02a2f715255c79ccc58fa916b815dffa8a6a3ce29bc0f96711170`。未实际退出运行中应用去查看静止 Dock 图标，以保留当前连接；已验证未启动隔离应用与实际安装包系统图标。
+
+## 0.10.13 弹框底部按钮同排修复
+
+日期：2026-10-06；构建 108。修正上轮遗漏的共享确认框纵向动作布局，21 处调用统一横向靠右，按钮保持内容宽度；消息与输入仍位于上方。9 项相关交互测试全部通过，增加真实按钮 frame 同一水平线、不重叠断言；完整弹框截图已打开观察，证据 `native/dist/ui-0.10.13/`。
+
+带输入框的片段分组重命名把输入移到消息区，防止其挤占按钮行。最终 Release、严格签名、ZIP 完整性及安装版本／二进制散列均通过。已直接覆盖 `/Applications/Axon.app` 为 0.10.13／108，无保留备份、无重启；ZIP SHA-256：`e89925b78df894564a0172d873948df2ed2711163cdec05603aa3fae2862efbc`。
+
+## 0.10.12 其他弹窗交互验收与修复
+
+日期：2026-10-06。版本 0.10.12，构建号 107。
+
+- 统一 21 处共用确认动作至 AppAlertButton，业务动作后关闭，取消执行清理；修复键盘／无障碍按钮动作执行但 sheet 未关闭的问题，并验证删除目标先使用后清理。
+- 文件冲突弹框明确 Escape 为取消传输、Return 为跳过；分组、凭据、文件删除和工作区恢复使用危险确认默认取消。本地文件编辑取消按钮补齐 Axon 样式。
+- 改动前完整基线 544 项：513 通过、31 SSH 服务依赖项跳过、0 失败；修复后相关回归 85 项全部通过；最终扩展交互 7 项全部通过。后两组有重叠，未相加声称完整套件通过。
+- 12 类编辑弹框、原生输入／三按钮确认、共享确认、监控详情完成实际交互验收；真实截图已打开观察。日志与截图 `native/dist/ui-0.10.12/`，覆盖细节及未验证网络操作见 `native/DIALOG_AUDIT.md`。使用私有工作区，不操作用户服务器。
+
+- Release 构建、严格签名及 ZIP 完整性通过，日志 `/private/tmp/axon-0.10.12-package.log`；ZIP SHA-256：`b66e7f2e5942855d0175a0053696b018a5abce8e65f6553adb7229e59d619b19`。
+- 已直接覆盖 `/Applications/Axon.app` 为 0.10.12／构建 107，版本、可执行文件散列及签名核验通过；无保留备份，未退出或重启运行中应用。安装记录 `native/dist/installation-0.10.12.txt`，重新打开后加载新版。
+
+## 0.10.11 删除弹框原生点击修复
+
+日期：2026-10-06。版本 0.10.11，构建号 106。
+
+- AppModalAlert 的 SwiftUI 动作按钮替换为 Axon 既有 PreferencesRectNativeButton，由 NSButton 的 target／action 在 AppKit 模态循环内响应。保留 Axon 配色、圆角和统一按钮尺寸；隐藏重复窗口标题，弹框结束关闭窗口。
+- 代码片段删除使用明确 destructive 标记，确认按钮红色；回车默认取消，不默认删除。片段确认操作集中到 AppStore，同一生产路径可由真实弹框测试验证。其余输入弹框沿用首按钮确认／Escape 取消规则。
+- 21 项全部通过、0 失败、0 跳过，日志 `/private/tmp/axon-modal-0.10.11-final.log`，覆盖删除弹框、片段持久化、取消保留、其他片段保留、主机删除及快捷键回归。测试向模态窗口发送真实鼠标按下并排队鼠标抬起，在按钮左侧内边距点击，确认命中及动作执行；旧测试只直接 stopModal，未测试按钮，现已补齐。
+- 已打开观察真实模态 NSHostingView 截图 `native/dist/ui-0.10.11/snippet-delete-0.png`，长名称、删除／取消按钮布局正常，重复标题移除，删除采用语义红色。私有测试工作区验证取消与确认后 JSON 的结果，不删除用户片段、不访问用户服务器。
+
+- Release、严格签名及 ZIP 完整性通过，日志 `/private/tmp/axon-0.10.11-package.log`；ZIP SHA-256：`48ae403bef8e969cf9d0d39bb8c5b8c235a6fe0b7c4b2a953e37e8d5dbcb9074`。
+- 已直接覆盖 `/Applications/Axon.app` 为 0.10.11／构建 106，版本、可执行文件散列和签名核验通过；未保留备份，未退出或重启当前应用。安装记录 `native/dist/installation-0.10.11.txt`，重新打开后加载新版。
+
+## 0.10.10 已保存快捷键执行修复
+
+日期：2026-10-06。版本 0.10.10，构建号 105。
+
+- 将应用菜单提取为观察 AppStore 的 AxonCommands，确保已保存绑定变化更新菜单；新增应用本地键盘事件路由，每次读取已保存配置，在终端输入与菜单之前执行对应操作，避免依赖 SwiftUI 菜单快捷键刷新。主窗口和场景窗口明确对应 store，其他窗口、附属 sheet 与模态窗口不接管；录入期间不执行应用动作，长按不重复创建会话。
+- 保存设置通过目标 store 的通知调用同一 save 路径，沿用未修改、数字非法和快捷键冲突禁用规则；设置页仍保留菜单等效键。
+- 31 项相关测试全部通过、0 失败、0 跳过，日志 `/private/tmp/axon-shortcut-0.10.10-final.log`。真实 NSApplication 事件队列验证自定义键打开启动器、修改后旧键失效与新键生效、NSTextField 与 SwiftTerm 焦点、设置入口、录入隔离与无关窗口不接管。实际设置视图录入 ⌘N 后使用 ⌘Return 保存，验证工作区 JSON 中新键已持久化。
+- 测试窗口未激活时 NSApp.keyWindow 为空；路由改用事件目标窗口，只有无窗口事件才回退 keyWindow。没有通过放宽窗口所属关系来接管未知窗口。
+- 已打开观察真实 NSWindow／NSHostingView 的保存后截图 `native/dist/ui-0.10.10/shortcut-command-n-saved.png`，确认 ⌘N 保留且保存按钮恢复禁用，Axon 布局正常。测试使用私有临时工作区与未连接的终端，不在用户服务器执行命令。上一版验证只覆盖录入，本次增加保存后实际执行路径。
+
+- Release、严格签名及 ZIP 完整性通过，日志 `/private/tmp/axon-0.10.10-package.log`；ZIP SHA-256：`b36f89b09c0a1891e96d8335cb51234d86adeabd4e1ef96de3a4ae21a0d6e90c`。
+- 已直接覆盖 `/Applications/Axon.app` 为 0.10.10／构建 105，可执行文件散列及签名通过，未保留备份，未退出或重启当前应用；安装记录 `native/dist/installation-0.10.10.txt`。用户重新打开后加载新版。
+
+## 0.10.9 快捷键录入事件修复
+
+日期：2026-10-06。版本 0.10.9，构建号 104。
+
+- 录入按钮明确接受首响应者，捕获属于当前主窗口的无 window 键盘事件，并在录入期间处理 performKeyEquivalent，避免组合键绕过录入器。基础字符按无修饰键解析，保留 Command／Control／Option／Shift 组合，避免控制字符和 Option 变体造成无法录入。
+- 移除对 Command-N 的错误保留限制；没有 Command 与不可用组合显示不同提示。保留标准编辑、退出和关闭窗口等系统快捷键限制，以及重复绑定校验、Escape 取消、失焦结束捕获。
+- 30 项相关测试全部通过、0 失败、0 跳过，日志 `/private/tmp/axon-shortcut-0.10.9-final.log`。包括真实 NSApplication 事件队列的 Command-N／Control／Option／Shift 录入、实际设置视图、绑定持久化与恢复、设置及备份回归。此前直接调用 receive 的测试未覆盖窗口事件路径，本次补充该回归。
+- 已亲自打开实际 NSWindow／NSHostingView 截图 `native/dist/ui-0.10.9/shortcut-command-n-recorded.png`，确认新标签显示 ⌘ N、未保存状态与保存按钮正常，布局沿用 Axon 控件；测试使用私有临时工作区。
+
+- Release、严格签名及 ZIP 完整性通过，日志 `/private/tmp/axon-0.10.9-package.log`；ZIP SHA-256：`c15e00f568271ee530f3546b0f4fd4a6b99e640e57e3e7a40423c8c393d9602e`。
+- 已直接覆盖 `/Applications/Axon.app` 为 0.10.9／构建 104，可执行文件散列及签名核验通过，未保留备份，未退出或重启当前应用；安装记录 `native/dist/installation-0.10.9.txt`。退出并重新打开后加载新版。
+
+## 0.10.8 命令历史排除 Axon 初始化脚本
+
+日期：2026-10-06。版本 0.10.8，构建号 103。
+
+- 用户截图中的命令是 Axon 的 Bash／Zsh 历史钩子安装语句，以 if 开头，绕过原有仅检查 _axon_ 前缀的过滤。增加对保留钩子定义、安装和复合初始化语句的明确识别，接收协议与追加存储均排除它们。普通 grep／printf 等引用钩子名称的用户排查命令仍可记录。
+- 读取旧历史时只清理已识别的内部初始化记录并原子持久化，保留其他命令的 ID、日期、目录、退出码和耗时；读取失败不覆写原文件。清理在新版进程启动读取时执行，不另行修改运行中旧进程使用的用户历史文件。
+- 历史页补充不记录初始化脚本的说明，移除固定 1,000 条的过时文案；顶部「仅失败」采用紧凑卡片，不挤压标题。增加可注入的私有测试历史，避免渲染测试接触用户历史。
+- 最终 23 项全部通过、0 失败、0 跳过，日志 `/private/tmp/axon-history-0.10.8-final.log`。覆盖复合脚本、保留用户引用、旧记录清理及再次读取、追加拒绝、真实本机 Bash／Zsh 钩子、自动录入、正常终端屏幕、日志管理及查看器回归。
+- 已打开观察真实 NSWindow／NSHostingView 的 1050／1400pt 历史页截图，内部脚本移除，用户 ls -la 和目录／退出码／耗时保留，按钮与标题无挤压。截图 `native/dist/ui-0.10.8/history-user-only-*.png`；不访问用户服务器。
+
+- Release、严格签名及 ZIP 完整性通过，日志 `/private/tmp/axon-0.10.8-package.log`；ZIP SHA-256：`47adb1f7687de85adb7ff3614a458cde18f7e329df05f917cb18897537b64baf`。
+- 直接覆盖 `/Applications/Axon.app` 为 0.10.8／构建 103，可执行文件散列及签名核验通过，未保留备份，未退出或重启当前应用；安装记录 `native/dist/installation-0.10.8.txt`。重新打开后加载新版并清理旧初始化历史。
+
+## 0.10.7 设置界面检查与快捷键编辑
+
+日期：2026-10-06。版本 0.10.7，构建号 102。
+
+- 按用户九张截图检查终端历史数量、配色编辑器、关键词作用范围、键盘／剪贴板、导出及备份选择项、自动备份、快捷键与关于页面。历史数量改为带标签、范围校验的 Axon 数字输入，命令历史单独成卡片；导入／导出格式补充可见标签并限制 320pt 宽度。既有铃声、范围、格式下拉与方形勾选卡片复用统一控件，检查真实展开与禁用态。
+- 配色编辑器的预览／基础配色和 ANSI 调色板改为同起点、同底部卡片；两列测量自然高度后对齐，19 色字段仍可到达，页脚保持固定。调整预览字号，避免窄列中的示例文字挤压；不修改用户实际终端字号。
+- 快捷键由只读清单改为原生组合键录入按钮：点击后录入含 Command 的 ASCII 字符／Return 组合，Escape 取消，Tab／Shift-Tab 切换焦点，失焦结束捕获；支持恢复默认。保存校验重复组合及常用系统保留键，主菜单与保存设置按钮读取已保存绑定。旧工作区沿用默认绑定，自定义绑定可持久化及随备份恢复。
+- 关于页补充作者 fenghlkevin，把组件缩写改为用途说明（SwiftUI 界面、SwiftTerm 终端显示、Citadel SSH）。关键词范围浮层补充「作用范围」标题和全局／分组／主机说明，保持已选勾号及键盘行为。
+- 实际截图发现云备份三按钮固定宽度挤出窄窗口侧栏，改为自适应等宽按钮；复验侧栏和内容无横向溢出。新增快捷键字段初次自动备份恢复测试失败，定位为备份严格 schema 未包含 shortcuts；补充允许字段和绑定校验后，自动备份及 21 项备份回归全部通过。临时诊断已移除。
+
+- 最终 61 项全部通过、0 失败、0 跳过，日志 `/private/tmp/axon-settings-0.10.7-last.log`；覆盖录入／取消／失焦、重复键原子拒绝、JSON 与备份往返、备份密码／自动备份、19 色编辑、真实浮层键盘选择、650pt 设置及 1050／1400pt 主窗口导航，既有终端会话保持不变。
+- 已亲自打开观察真实 NSWindow／NSHostingView／NSPopover 的历史卡片、键盘／剪贴板、导出／备份、自动备份、快捷键、关于、作用范围及常规／紧凑配色弹窗截图。最终截图保存到 `native/dist/ui-0.10.7/`；检查纵向滚动、固定页脚、左右对齐和窄窗口无横向溢出。测试使用临时工作区与测试凭据，不访问用户服务器或保存用户工作区。
+
+- Release 构建、严格签名、ZIP 完整性校验通过，日志 `/private/tmp/axon-0.10.7-package.log`。ZIP SHA-256：`2bad75bf0284655678cae91364724c6c191f60960420269f9f2164e6d34d151e`。
+- 按既有授权直接覆盖 `/Applications/Axon.app`，版本 0.10.7／构建 102、可执行文件散列与严格签名一致；未保留备份、未退出／重启现有应用。安装记录 `native/dist/installation-0.10.7.txt`；主动退出并重新打开后生效。
+
+## 0.10.6 工作场景终端卡片布局修复
+
+日期：2026-10-06。版本 0.10.6，构建号 101。
+
+- 将同一行中挤在一起的连接目标、tmux、会话名和目录分层：连接目标与初始目录采用等宽双列、标签及 38pt 控件对齐；tmux 使用独立方形选择卡片、标题及次级说明，启用时在下方缩进显示带标签的 340pt 会话名输入。
+- 修正终端主机选择器沿用路径编辑器 180pt 固定宽度而被居中、过早截断的布局；保留路径编辑器原有紧凑选择器。卡片采用现有 Palette.sidebar、16pt 内边距和 10pt 圆角。首尾排序按钮分别禁用；切换到本地终端时关闭 tmux 选项，避免保留无法保存的本地持久会话状态。
+- WorkSceneLayoutTests 最终 10 项全部通过、0 失败、0 跳过，日志 `/tmp/axon-scene-0.10.6-final.log`。覆盖中英文、本地／SSH／tmux／多终端真实渲染、长表单滚动及固定保存栏与已有场景行为。新增渲染测试开启本进程增强无障碍后复验通过，不访问用户服务器、不写用户工作区。
+- 已亲自打开观察真实 NSHostingView／NSWindow 截图 `native/dist/ui-0.10.6/scene-card-*.png` 的代表性中英文和多终端状态；主机与目录两列对齐，选项／输入互不挤压，保存栏保持可见。长列表主体滚动。
+
+- Release 构建、严格 codesign 与 ZIP 完整性通过，日志 `/tmp/axon-0.10.6-package.log`；ZIP SHA-256：`fc1a349fe6c6f647918f0748d6d69c610808ec5978f181637d52dfc88c3629a6`。
+- 按既有授权直接覆盖 `/Applications/Axon.app`，安装版本 0.10.6／构建 101、可执行文件 SHA-256 和严格签名均验证通过；没有保留备份，没有退出或重启现有应用。安装记录 `native/dist/installation-0.10.6.txt`；退出并重新打开后加载新版。
+
+## 0.10.5 全应用下拉面板与方形选择项统一
+
+日期：2026-10-06。版本 0.10.5，构建号 100。
+
+- 全量检索 Axon 源码的 Picker、Menu、原生 popUp、checkbox 与 radio 实现；替换 8 处默认 SwiftUI Picker（语言、铃声、导入／导出格式、流量周期、GPU、片段参数类型、场景视图）和 2 处分组 Menu。NativeSelectionField、分组、凭据、字体和标签操作的展开路径复用 AxonMenuPopover；NSMenu 保留为动作／选择数据模型，不直接呈现默认下拉外观。macOS 应用菜单栏、系统文件与颜色面板保持系统行为；网格／列表等导航控件保留导航语义。
+- 展开浮层沿用 Palette.sidebar、8pt 条目圆角、语义图标、Palette.selected 悬停／焦点背景、accent 已选勾号、分隔线、长列表滚动与字体字形预览。禁用项不能选择，方向键跳过禁用项，Return／Space 确认，Escape 关闭并恢复字段焦点。关闭动画造成的连续重开时序问题已修复，采用立即关闭的原生浮层路径；实际连续选择／重开／取消测试通过。
+- 认证／私钥来源互斥选项、程序图标、光标形状、主题卡片、普通勾选设置、分组继承、批量主机、片段接收终端、同步输入、目录比较复用方形勾选标记及浅色选中背景。选择语义不变，明确 switch 类型设置保留开关。
+- 相关广泛回归：127 项执行、119 项通过、8 项跳过、0 失败，日志 `/tmp/axon-selection-verified-tests.log`；跳过的是缺少本地 SSH fixture 的监控连接集成测试。本次末次变更后复验批量、片段、目录比较、终端工具、工作场景和真实浮层：39 项全部通过、0 失败，日志 `/tmp/axon-selection-last.log`。
+- 已亲自打开观察真实 NSHostingView／NSWindow／NSPopover 截图：`native/dist/ui-0.10.5/` 的中英文分组、凭据、字体展开浮层、选择项、设置、监控、批量任务、场景和片段截图；覆盖 340／420pt 局部面板、650／900pt 设置、1050／1400pt 主页面与长名称。实际检查选择标记、标签、滚动区域和固定操作栏；测试不访问用户服务器、不保存用户工作区。
+- 用户确认的三张设计图及统一规范写入 `skills/axon-dev-delivery/SKILL.md`，原始图保存到该 skill 的 `references/ui/`。默认 Python 缺少 PyYAML，使用 Ruby YAML.safe_load 验证 frontmatter，并核对全部参考图链接有效；没有安装额外依赖。
+
+- 最终 Release 构建、严格 codesign 与 ZIP 完整性通过，日志 `/tmp/axon-0.10.5-package-final.log`；ZIP SHA-256：`83550b1802deb32571dc234df3377c89ce06985a0bab400b43369ac255389efe`。
+- 按既有授权直接覆盖 `/Applications/Axon.app`，暂存副本及最终版本 0.10.5／构建 100、可执行文件 SHA-256 和严格签名均一致；没有保留备份，没有强退或重启现有应用。退出并重新打开后加载新版。
+
+## 0.10.4 TCP 转发弹窗 UI 修复
+
+日期：2026-10-06。版本 0.10.4，构建号 99。
+
+- SSH 主机及类型选择均复用 AxonChoiceField，替换默认 Picker 与系统分段控件；38pt 圆角背景、图标、下方菜单、整块命中及原生键盘行为统一。
+- 补齐必填字段标签、不同方向说明与标题图标；540×620pt 表单主体可滚动，标题及圆角取消／保存按钮固定。空草稿不立即显示错误，保存保持禁用；已有错误同时展示图标及文字。
+- ConnectionValidationTests 8 项、ForwardRulePresentationTests 2 项、WorkSceneLayoutTests 9 项，共 19 项通过、0 失败、0 跳过。日志 `/tmp/axon-forward-tests.log`。实际 NSMenu 动作验证主机选择／清空及三种类型切换，两个选择器两角命中、38pt 高度及内容边界通过；没有连接用户服务器。
+- 真实 NSWindow／NSHostingView 中英文新建、本地、远程、SOCKS5、错误及长主机名截图位于 `native/dist/ui-0.10.4/forward-*.png`；已亲自打开检查代表性截图，标签、说明、错误和固定操作栏没有裁切或遮挡。
+
+- Release 构建、严格 codesign 与 ZIP 完整性通过，日志 `/tmp/axon-0.10.4-package.log`。ZIP SHA-256：`76169c7521c5a6c8011c8a758d00752460210d76fc93d4d9f897a88ca9a2aa4d`。
+- 已按既有授权直接覆盖 `/Applications/Axon.app`，暂存副本及最终安装版本、构建号、可执行文件哈希与严格签名校验一致；没有保留旧版备份，没有强退或重启当前应用。用户退出并重新打开后加载新版。
+
+## 0.10.3 移除凭据库重复新建入口
+
+日期：2026-10-06。版本 0.10.3，构建号 98。移除凭据库空状态中央的「新建身份」按钮，保留左上角新建私钥与新建身份菜单。
+
+- WorkspaceNavigationTests：1 项通过、0 失败；实际导航保留缓存终端会话，日志 `/tmp/axon-0.10.3-ui.log`。亲自打开检查 1050／1400pt 的真实截图 `native/dist/ui-0.10.3/workspace-page-credentials-*.png`，中央仅保留空状态图标及说明，左上角入口保留。
+- Release 构建、严格 codesign 与 ZIP 完整性检查通过；日志 `/tmp/axon-0.10.3-package.log`。ZIP SHA-256：`27b9a1fb9770413757d9090835f2f4523c3d62b30b6c2dbb4562dcc40b0b7dc4`。
+- 按既有授权覆盖安装到 `/Applications/Axon.app`，临时副本与最终安装版本、可执行文件哈希及严格签名均核对通过。遵循用户不保留备份的要求；未强退或重启现有应用，退出并重新打开后加载新版。
+
+## 0.10.2 快速连接弹窗 UI 修复
+
+日期：2026-10-06。版本 0.10.2，构建号 97。已按此前安装授权和“不需要备份，直接覆盖”要求安装到 `/Applications/Axon.app`；未保留本次旧版备份，未强退或重启应用。主动重新打开应用后加载新版。
+
+- 将截图指出的默认 SwiftUI Picker 替换为 `AxonChoiceField`，复用 Axon 的 38pt 背景、圆角、钥匙图标、下方菜单和整块命中。支持共享凭据选择及返回连接时输入密码。
+- 补充主机、用户名、端口和凭据标签；沿用现有配色及圆角操作按钮。标题和底部操作栏固定，440×520pt 表单在显示错误时不挤压标题和按钮。Return 连接、Escape 取消。
+- 初次打开空草稿不显示红色地址错误，连接按钮保持禁用；地址编辑后显示校验反馈，错误输入保持。现有严格地址／端口及共享凭据校验保留。
+- QuickConnectPresentationTests、LauncherTests、ConnectionValidationTests、HostSelectionFieldTests：20 项通过、0 失败，日志 `/tmp/axon-0.10.2-tests.log`。最终布局复验 QuickConnectPresentationTests：2 项通过、0 失败，日志 `/tmp/axon-0.10.2-ui-final.log`；独立菜单测试补齐 AppKit 初始化后通过。
+- 已亲自打开观察真实 NSHostingView／NSWindow 渲染的中英文空白、错误和长共享凭据名称六张截图：`native/dist/ui-0.10.2/quick-*.png`。无系统默认下拉框；控件两角整块命中、38pt 高度、内容边界及实际 NSMenu 选择／取消选择动作通过。验收未创建连接、未修改主机库或访问用户服务器。
+- Release 构建、严格 codesign 和 ZIP 完整性检查通过，日志 `/tmp/axon-0.10.2-package.log`。临时安装副本与最终应用版本及可执行文件 SHA-256 与发布源一致。ZIP SHA-256：`4b39c6b8da8f0e05cbefb87ba7f4d8591edb9f478c7d8f134c67a6c1f2333331`。
+
+## 0.10.1 RSA-SHA2、OpenSSH 证书、Agent 转发及统一圆角按钮
+
+日期：2026-10-06。发布版本 0.10.1，构建号 96。源码、Release 应用与 ZIP 已完成。随后按用户明确要求安装到 `/Applications/Axon.app`：安装时生成的旧版备份已按用户后续“不需要备份，直接覆盖”指示删除；临时安装副本与最终应用的严格签名校验通过，版本及可执行文件 SHA-256 与发布源一致。安装失败恢复流程已准备，本次无需恢复。未强退、启动或重启用户应用；安装完成不代表已运行新版。
+
+- 全部 526 项按测试类分成 12 批执行：521 通过、5 跳过、0 失败。跳过项为 MonitoringBackgroundConnectionTests 的 3 项与 MonitoringIntegrationTests 的 2 项，需要专用 Linux 监控采样夹具。清单来自 `swift test --package-path native list`，每批最多 8 类，使用同一隔离 SSH/SFTP 夹具；逐批结果保存在 `native/dist/ui-0.10.1/test-batches.json`，日志 `/tmp/axon-0.10.1-batch-1.log` 至 `batch-12.log`。最后的证书必填校验另运行 ConnectionValidationTests：8 项通过，日志 `/tmp/axon-0.10.1-validation.log`。
+- 初始单进程全量运行出现 Agent／PTY 超时等失败，不能记为通过。线程采样 `/tmp/axon-test-sample.txt` 显示 AppKit `NSAnimation._runBlocking` 占满共享 Dispatch 的 64 线程软上限；因此采用独立进程分批执行全部测试，不删除失败测试或增加跳过项。分批后的 Agent、PTY、生命周期及导航测试均通过。
+- RSA：本机一次性 OpenSSH 服务分别只允许 rsa-sha2-512／rsa-sha2-256。验证 RSA 服务器主机密钥、文件私钥认证、SHA-256 回退、命令输出及真实 SFTP 列目录。不使用 RSA-SHA1 回退。
+- 证书：Ed25519／RSA 用户证书在两个 SHA2 服务登录成功；拒绝缺少 CA、错误 CA、错误登录身份、密钥不配对和过期证书。RSA 服务器证书在配置正确 CA 后连接并执行测试命令成功，错误 CA 被拒绝。启用用户证书但路径为空时阻止连接。
+- Agent：独立临时 ssh-agent 加载两把测试密钥，RSA Agent 在两种 SHA2 服务认证成功。转发只列出所选 RSA 身份，未暴露另一把 Ed25519 身份；远端通过转发 Agent 完成真实第二跳 SSH 签名登录，两种算法均成功。拒绝修改 Agent 的请求和未授权身份；RSA 转发策略只允许 SHA2 标志。转发默认关闭，只对明确开启的终端会话启用。
+- SSH 兼容实现保存在 `native/Vendor/Citadel` 与 `native/Vendor/swift-nio-ssh`，不是临时修改 `.build/checkouts`；原始版本、补丁范围及许可证见 `native/Vendor/README.md`。其他依赖固定版本未升级，发行包包含两库许可证。
+- 按钮：公共操作、图标按钮、菜单及原生操作控件采用统一 8pt 圆角；无样式的 SwiftUI 按钮改用公共表面样式，保持卡片／列表／标签布局及主次配色。动作保留整块矩形命中范围、禁用透明度及既有键盘行为；批量筛选按钮也统一为圆角矩形。
+- 真实 UI 验收：亲自打开观察 `native/dist/ui-0.10.1/` 的 NSHostingView／NSWindow 实际截图，包含 1050／1400pt 的全部主页面、启动页与 10 个设置类别；另检查主机网格、认证／删除／跳板选择弹窗、批量历史／模板及编辑弹窗、会话日志、同步输入、四分屏、终端五种工具、SFTP 文件工具与传输队列的窄／宽和错误／禁用状态。证书及转发字段在 360pt 控件布局中检查，无横向溢出。
+- 关键交互：每个导航／设置行六个位置实际命中并执行，进入／返回保留同一终端会话；模板保存、同步目标应用、下拉框整块命中、未配置云端时禁用操作、无文件时禁用导入及本机 PTY／输入记录回归通过。用户服务器没有用于验收。
+- Release 构建成功，arm64 Mach-O；最终严格 codesign 校验与 ZIP 完整性检查通过。文件 `native/dist/Axon-0.10.1-mac-arm64.zip`，11,236,698 字节，SHA-256 `0026c9ec9fa369ec073a2584c17b5c10576508def33bc942fc137ffc651bba67`。日志 `/tmp/axon-0.10.1-package-final.log`。
+
+## 0.10.0 批量任务、SSH Agent、会话日志与四分屏
+
+日期：2026-10-06。发布版本：0.10.0，构建号 95。源码、Release 应用及 ZIP 已完成；本次未替换 `/Applications/Axon.app`，未强退或重启用户应用。
+
+- 全量 `TABBY_TEST_SERVER=… swift test --package-path native`：521 项、0 失败、5 跳过（516 项通过）。跳过项为 MonitoringBackgroundConnectionTests 的 3 项与 MonitoringIntegrationTests 的 2 项，需要额外的专用 Linux 监控采样夹具。测试日志：`/tmp/axon-final-tests.log`。
+- 最终补充主窗口实际点击验收：OperationsWorkspaceUITests 1 项通过、0 失败，日志 `/tmp/axon-final-ui.log`。通过真实 SwiftUI/AppKit 的 NSHostingView/NSWindow 渲染，亲自打开检查截图；不是设计稿。
+- 批量任务：模板校验、参数展开、持久历史、旧工作区兼容、失败重试的新记录及地址快照保护、损坏归档保护、并发、取消和超时通过。模板保存按钮实际触发，并核对保存参数。历史／模板页从 MainView 切换，侧栏保留。
+- SSH：一次性本机 UNIX Socket ssh-agent 中加载测试 Ed25519 密钥，身份枚举、签名验证及真实 Citadel Agent 认证／SFTP 列目录通过。仅访问本机临时 SSH/SFTP 服务，没有执行用户服务器命令或修改用户 Agent。保留密码／私钥／跳板机和主机密钥验证测试。
+- 分屏／输入：真实本地 PTY 验证广播、直接单目标输入、断线暂停、协议回复不广播；独立创建的本地 TerminalSession 命令自动记录回归通过。四分屏增减、合并、分离及场景布局保存验证通过。同步弹窗实际选择第四接收终端并应用，核对接收集合。
+- 会话日志：分段 UTF-8、控制序列清理、命令标记定位、真实本地输出记录、权限及容量限制验证通过。查看器是不可编辑的可选择文本，完整内容搜索及分页，导出全文。记录默认关闭。
+- UI：截图位于 `native/dist/ui-0.10.0/`；覆盖 1050/1400pt 中英文历史／模板、主窗口入口、720×700pt 模板／诊断弹窗、660×730pt 同步输入、810/1160pt 日志与四分屏。检查下拉框整块命中、长主机名、成功／失败结果、选择和禁用态、固定弹窗操作栏。同步选择区调整为两列，避免四个接收终端挤占命令区。四分屏同时检查终端独立位图，父视图缓存截图中的终端文字位置与独立位图存在合成差异，不以该缓存图宣称屏幕像素完全一致。
+- Release 构建成功（arm64）；`codesign --verify --deep --strict --verbose=2` 在系统信任可用的执行环境通过；ZIP `unzip -t` 无错误，`git diff --check` 通过。构建仍有既有并发／弃用 API 警告，未视作零警告构建。
+- ZIP：`native/dist/Axon-0.10.0-mac-arm64.zip`；SHA-256：`b9db5890a9f9db09530b57669557bb78258c93cd085cafd0029f372c370da587`。
+
+范围限制：Agent 只支持 Ed25519；RSA-SHA2、SSH 证书、键盘交互认证、ProxyCommand、PKCS#11 与 Agent 转发未实现。诊断面板检查本地配置并提供排查建议，不自动探测网络。日志为文本输出，不重放全屏终端；终端回显内容可包含敏感信息。历史保留 100 次／50 MiB，单目标归档输出 128 KiB；日志每份 20 MiB、保留 25 份已结束记录。没有验证所有实际服务器的算法组合。
+
 
 日期：2026-10-03。环境：本机 Apple Silicon / Xcode 27 / Swift 6.4。
 

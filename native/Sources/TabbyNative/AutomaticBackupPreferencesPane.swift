@@ -26,7 +26,7 @@ struct AutomaticBackupPreferencesPane: View {
         BackupCard(title: store.text("Automatic backup", "自动备份"), symbol: "clock.arrow.circlepath") {
             VStack(alignment: .leading, spacing: 16) {
                 Text(store.text("Create an encrypted backup in the background once after each app launch. Configure either or both destinations. The new-file option above retains each run; otherwise Axon-latest.axonbackup is updated.", "每次启动 Axon 后，在后台备份一次。两个目标可单独或同时启用；上方开启“每次备份生成新文件”可保留每次备份；关闭时更新 Axon-latest.axonbackup。" )).foregroundStyle(Palette.muted)
-                Toggle(store.text("Back up to iCloud / synced folder on startup", "启动后自动备份到 iCloud / 同步文件夹"), isOn: $settings.folderEnabled)
+                Toggle(store.text("Back up to iCloud / synced folder on startup", "启动后自动备份到 iCloud / 同步文件夹"), isOn: $settings.folderEnabled).toggleStyle(AxonCheckboxStyle())
                     .accessibilityIdentifier("axon-auto-folder-enabled")
                 if settings.folderEnabled {
                     HStack(spacing: 12) {
@@ -37,7 +37,7 @@ struct AutomaticBackupPreferencesPane: View {
                         action(store.text("Choose folder…", "选择文件夹…"), "axon-auto-folder-choose", enabled: readable, run: chooseFolder)
                     }
                 }
-                Toggle(store.text("Upload to S3 on startup", "启动后自动上传到 S3"), isOn: $settings.s3Enabled)
+                Toggle(store.text("Upload to S3 on startup", "启动后自动上传到 S3"), isOn: $settings.s3Enabled).toggleStyle(AxonCheckboxStyle())
                     .accessibilityIdentifier("axon-auto-s3-enabled")
                 if settings.s3Enabled {
                     Text(store.text("Automatic S3 object: ", "S3 自动备份对象：") + settings.s3Prefix + "/" + (createNewFile ? store.text("Axon-<timestamp>-<id>.axonbackup", "Axon-<时间>-<标识>.axonbackup") : AutomaticBackupPersistence.filename()))

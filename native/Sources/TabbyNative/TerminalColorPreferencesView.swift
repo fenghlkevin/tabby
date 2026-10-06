@@ -48,7 +48,7 @@ struct TerminalColorPreferencesView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
                     TextField(text("Search schemes", "搜索配色方案"), text: $search).textFieldStyle(.plain).accessibilityIdentifier("axon-theme-search")
-                    if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).help(text("Clear search", "清空搜索")) }
+                    if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(AxonSurfaceButtonStyle()).help(text("Clear search", "清空搜索")) }
                 }.padding(10).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
                 HStack(spacing: 6) {
                     ForEach(TerminalThemeFilter.allCases) { item in
@@ -66,8 +66,8 @@ struct TerminalColorPreferencesView: View {
                     .padding(14).frame(maxWidth: .infinity, alignment: .leading).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }.appAlert(text("Delete custom scheme?", "删除自定义方案？"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { theme in
-            Button(text("Cancel", "取消"), role: .cancel) { deleting = nil }
-            Button(text("Delete scheme", "删除方案"), role: .destructive) { remove(theme); deleting = nil }
+            AppAlertButton(text("Cancel", "取消"), role: .cancel) { deleting = nil }
+            AppAlertButton(text("Delete scheme", "删除方案"), role: .destructive) { remove(theme); deleting = nil }
         } message: { theme in
             Text(theme.name + text(" will be removed from your scheme library. The current terminal palette will return to Dracula Green.", " 将从配色方案库中移除；当前终端配色将恢复为 Dracula Green。"))
         }.sheet(item: $editor) { request in

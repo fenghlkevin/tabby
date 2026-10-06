@@ -2,6 +2,7 @@ import XCTest
 import SwiftTerm
 import Combine
 import AppKit
+import SwiftUI
 @testable import TabbyNative
 
 final class CommandHistoryTests: XCTestCase {
@@ -16,6 +17,44 @@ final class CommandHistoryTests: XCTestCase {
     func testSecretCommandsAndIntegrationAreExcluded() {
         for value in ["curl --password secret", "export API_TOKEN=abc", "curl -H 'Authorization: Bearer abc'", "sshpass -p password ssh host", "_axon_history_prompt", "printf 'axon-command;token;ready'", "pwd\u{1b}"] { XCTAssertFalse(CommandHistoryProtocol.allowed(value), value) }
         for value in ["ls -la", "sudo systemctl status nginx", "printf '%s' 中文", "cat a\ncat b"] { XCTAssertTrue(CommandHistoryProtocol.allowed(value), value) }
+    }
+    func testCompoundBootstrapIsExcludedButUserReferencesArePreserved() {
+        let compound = CommandHistoryProtocol.script(token: "fixture").components(separatedBy: "\n").dropFirst(5).joined(separator: "; ")
+        XCTAssertTrue(compound.hasPrefix("if ["))
+        XCTAssertTrue(CommandHistoryProtocol.isInternalIntegration(compound))
+        XCTAssertFalse(CommandHistoryProtocol.allowed(compound))
+        for command in ["grep _axon_history_emit ~/.zshrc", "printf '%s' _axon_history_finish", "if [ -n \"${ZSH_VERSION-}\" ]; then echo zsh; fi"] {
+            XCTAssertFalse(CommandHistoryProtocol.isInternalIntegration(command))
+            XCTAssertTrue(CommandHistoryProtocol.allowed(command))
+        }
+    }
+    @MainActor func testLegacyBootstrapIsCleanedAndUserMetadataPersistsAndRenders() async throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("commands.json")
+        let compound = CommandHistoryProtocol.script(token: "fixture").components(separatedBy: "\n").dropFirst(5).joined(separator: "; ")
+        let internalEntry = ExecutedCommand(hostID: nil, hostName: "Local", sessionID: UUID(), command: compound)
+        let user = ExecutedCommand(hostID: nil, hostName: "Local", sessionID: UUID(), command: "ls -la", directory: "/root", exitCode: 0, duration: 2)
+        try JSONEncoder().encode([internalEntry, user]).write(to: url)
+        let history = CommandHistoryStore(fileURL: url)
+        XCTAssertEqual(history.entries, [user]); XCTAssertEqual(CommandHistoryStore(fileURL: url).entries, [user])
+        history.append(internalEntry); XCTAssertEqual(history.entries, [user])
+        let store = AppStore(fileURL: root.appendingPathComponent("workspace.json")); store.workspace.preferences.language = "zh-CN"
+        for width: CGFloat in [1050, 1400] {
+            let hosting = NSHostingView(rootView: OperationHistoryView(history: history, server: "local").environmentObject(store).font(.system(size: 13)).foregroundStyle(Palette.text).background(Palette.background).preferredColorScheme(.light)); hosting.sizingOptions = []
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(150)); hosting.layoutSubtreeIfNeeded()
+            if let path = ProcessInfo.processInfo.environment["AXON_UI_CAPTURE_DIR"] {
+                let directory = URL(fileURLWithPath: path); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)); hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: directory.appendingPathComponent("history-user-only-\(Int(width)).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL.path))
     }
     @MainActor func testPersistenceBoundAndClearWithPrivateFilePermissions() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

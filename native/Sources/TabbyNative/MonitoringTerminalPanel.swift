@@ -19,7 +19,7 @@ struct MonitoringTerminalPanel: View {
                 Spacer(minLength: 0)
                 if let id = targetID {
                     Button { center.refresh(id) } label: { Image(systemName: "arrow.clockwise").frame(width: 30, height: 30).contentShape(Rectangle()) }
-                        .buttonStyle(.plain).help(store.text("Refresh status", "刷新状态")).accessibilityLabel(store.text("Refresh status", "刷新状态"))
+                        .buttonStyle(AxonSurfaceButtonStyle()).help(store.text("Refresh status", "刷新状态")).accessibilityLabel(store.text("Refresh status", "刷新状态"))
                         .disabled(!canRefresh(id))
                 }
             }
@@ -71,7 +71,7 @@ struct MonitoringTerminalPanel: View {
                     center.select(id)
                     store.section = "monitoring"
                 } label: { Label(store.text("View details", "查看详情"), systemImage: "arrow.up.right").frame(maxWidth: .infinity, minHeight: 34).contentShape(Rectangle()) }
-                    .buttonStyle(.plain).foregroundStyle(Palette.accent).background(Color.white.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 8))
+                    .buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.accent).background(Color.white.opacity(0.05)).clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 Text(store.text("Status is available for connected Linux SSH sessions. Select a remote terminal to view it here.", "状态面板用于已连接的 Linux SSH 会话。选择远程终端后可在这里查看。"))
                     .font(.system(size: 12)).foregroundStyle(TerminalChrome.muted)

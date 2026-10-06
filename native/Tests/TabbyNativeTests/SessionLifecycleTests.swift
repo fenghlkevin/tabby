@@ -63,7 +63,7 @@ final class SessionLifecycleTests: XCTestCase {
         let survivor = try XCTUnwrap(store.sessions.first)
         store.split()
         let exiting = try XCTUnwrap(store.sessions.last)
-        let view = try XCTUnwrap(exiting.makeView() as? LocalProcessTerminalView)
+        let view = try XCTUnwrap(exiting.makeView() as? LocalTerminal)
         defer { store.sessions.forEach { $0.disconnect() } }
         XCTAssertTrue(view.process.running)
         exiting.processTerminated(source: TerminalView(frame: .zero), exitCode: 0)
@@ -75,7 +75,7 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertFalse(exiting.connected); XCTAssertFalse(view.process.running)
         exiting.processTerminated(source: view, exitCode: 0)
         XCTAssertEqual(store.sessions.map(\.id), [survivor.id], "Late termination after cleanup must be harmless")
-        let survivorView = try XCTUnwrap(survivor.makeView() as? LocalProcessTerminalView)
+        let survivorView = try XCTUnwrap(survivor.makeView() as? LocalTerminal)
         survivorView.process.send(data: Array("exit\n".utf8)[...])
         try await waitUntil { store.sessions.isEmpty }
         XCTAssertNil(store.activeSession); XCTAssertEqual(store.section, "hosts")
@@ -89,7 +89,7 @@ final class SessionLifecycleTests: XCTestCase {
         store.workspace.preferences.localShell = "/bin/sh"; store.workspace.preferences.localLoginShell = false
         store.connect()
         let failed = try XCTUnwrap(store.sessions.first)
-        let view = try XCTUnwrap(failed.makeView() as? LocalProcessTerminalView)
+        let view = try XCTUnwrap(failed.makeView() as? LocalTerminal)
         view.process.send(data: Array("exit 3\n".utf8)[...])
         try await waitUntil { !failed.connected }
         XCTAssertEqual(store.sessions.map(\.id), [failed.id]); XCTAssertTrue(failed.status.contains("3"))

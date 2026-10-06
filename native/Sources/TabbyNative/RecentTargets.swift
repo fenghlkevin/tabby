@@ -173,7 +173,7 @@ enum RecentTargets {
         switch target.kind {
         case .ssh: return "SSH"
         case .sftp: return "SFTP"
-        case .localTerminal: return text("Local terminal", "本地终端")
+        case .localTerminal: return "Local"
         case .localFiles: return text("Local files", "本地文件")
         }
     }
@@ -201,6 +201,7 @@ enum RecentTargets {
         let host: Host?
         if target.kind == .localTerminal { host = nil }
         else { guard let value = RecentTargets.resolvedHost(target, workspace: workspace) else { return false }; host = value }
+        if target.kind == .ssh { connect(host); return true }
         if let session = sessions.first(where: { session in
             let matches = target.kind == .localTerminal ? session.host == nil : host.map { session.matchesEndpoint($0) } == true
             return matches && (session.connected || session.terminal == nil || session.connectionInProgress)

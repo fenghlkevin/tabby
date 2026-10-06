@@ -44,6 +44,17 @@ final class ConnectionValidationTests: XCTestCase {
         XCTAssertThrowsError(try ConnectionValidation.keyPath("/tmp/key\n", required: true))
     }
     func testHostNormalizationAndCurrentSharedAuthentication() throws {
+        var certified = host(); certified.auth = "key"; certified.keySource = "text"; certified.certificatePath = ""
+        XCTAssertThrowsError(try ConnectionValidation.host(certified, workspace: Workspace()), "Enabling a certificate requires selecting its file")
+        certified.certificatePath = "/fixture/user-cert.pub"
+        XCTAssertThrowsError(try ConnectionValidation.host(certified, workspace: Workspace()), "A certificate requires an explicit trusted CA")
+        certified.certificateAuthorityPath = "/fixture/ca.pub"
+        XCTAssertNoThrow(try ConnectionValidation.host(certified, workspace: Workspace()))
+        certified.forwardAgent = true
+        XCTAssertThrowsError(try ConnectionValidation.host(certified, workspace: Workspace()))
+        certified.agentFingerprint = "SHA256:selected"
+        XCTAssertNoThrow(try ConnectionValidation.host(certified, workspace: Workspace()))
+
         var value = host(); value.name = "  生产服务器  "; value.group = "  运维 分组  "; value.tags = "  中文,api  "; value.address = "  [::1]  "; value.username = "  root  "
         let normalized = try ConnectionValidation.host(value, workspace: Workspace())
         XCTAssertEqual(normalized.name, "生产服务器"); XCTAssertEqual(normalized.group, "运维 分组"); XCTAssertEqual(normalized.tags, "中文,api")
@@ -93,7 +104,7 @@ final class ConnectionValidationTests: XCTestCase {
         XCTAssertThrowsError(try session.settings(for: invalid), "Metadata is checked before reading Keychain or opening a password prompt")
         invalid = host(); invalid.username = "root user"
         XCTAssertThrowsError(try store.upsert(invalid, secret: "not-saved"))
-        invalid = host(); invalid.auth = "agent"
+        invalid = host(); invalid.auth = "unsupported"
         XCTAssertThrowsError(try store.upsert(invalid, secret: "not-saved"))
         var identity = VaultCredential(); identity.name = "fixture"; identity.username = "user\n"
         XCTAssertThrowsError(try store.saveCredential(identity, secret: "not-saved"))

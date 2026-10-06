@@ -39,7 +39,7 @@ final class TerminalTitleTests: XCTestCase {
         XCTAssertEqual(TerminalSession(host: host, store: store).title, "192.0.2.11")
         let local = TerminalSession(host: nil, store: store)
         let view = LocalTerminal(frame: .zero, font: .monospacedSystemFont(ofSize: 12, weight: .regular), options: TerminalOptions())
-        view.processDelegate = local
+        view.terminalDelegate = local
         view.feed(text: "\u{1B}]0;Local editor\u{7}")
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(local.title, "Local editor")

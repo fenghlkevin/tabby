@@ -47,7 +47,7 @@ class PreferencesRectNativeButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {
         let background = prominent ? NSColor(destructive ? Palette.danger : Palette.accent) : NSColor(hovering || selected || isHighlighted ? Palette.selected : Palette.field)
         background.withAlphaComponent(isEnabled ? (isHighlighted ? 0.72 : 1) : 0.4).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
+        NSBezierPath(roundedRect: bounds, xRadius: AxonButtonMetrics.radius, yRadius: AxonButtonMetrics.radius).fill()
         let textColor = prominent ? NSColor.white : destructive ? NSColor.systemRed : NSColor(Palette.text)
         drawText(title, rect: NSRect(x: 8, y: (bounds.height - 15) / 2, width: max(0, bounds.width - 16), height: 17), color: textColor.withAlphaComponent(isEnabled ? 1 : 0.45), font: .systemFont(ofSize: 12, weight: .semibold), centered: true)
         drawFocus()
@@ -130,7 +130,7 @@ final class TerminalThemeCardNativeButton: PreferencesRectNativeButton {
         nameLabel.stringValue = theme.name; nameLabel.textColor = NSColor(Palette.text)
         captionLabel.stringValue = theme.isCustom ? (chinese ? "自定义方案" : "Custom scheme") : theme.isLight ? (chinese ? "浅色" : "Light") : (chinese ? "深色" : "Dark")
         captionLabel.textColor = NSColor(Palette.muted)
-        selectedLabel.textColor = NSColor(Palette.accent); selectedLabel.isHidden = !selected
+        selectedLabel.textColor = NSColor(Palette.accent); selectedLabel.isHidden = true
         needsLayout = true
     }
     override func layout() {
@@ -152,10 +152,11 @@ final class TerminalThemeCardNativeButton: PreferencesRectNativeButton {
             NSColor(hex: theme.previewANSI[index]).setFill()
             NSBezierPath(roundedRect: NSRect(x: 13 + CGFloat(index % 8) * (width + 3), y: index < 8 ? 57 : 69, width: width, height: 8), xRadius: 2, yRadius: 2).fill()
         }
-        NSColor(hovering || isHighlighted ? Palette.selected : Palette.card).setFill()
+        NSColor(selected || hovering || isHighlighted ? Palette.selected : Palette.sidebar).setFill()
         NSRect(x: 0, y: 88, width: bounds.width, height: max(0, bounds.height - 88)).fill()
         NSGraphicsContext.restoreGraphicsState()
-        NSColor(selected ? Palette.accent : Palette.border).setStroke(); path.lineWidth = selected ? 2 : 1; path.stroke(); drawFocus()
+        AxonSelectionDrawing.mark(in: NSRect(x: bounds.width - 26, y: 96, width: 14, height: 14), selected: selected, enabled: isEnabled)
+        NSColor(Palette.border).setStroke(); path.lineWidth = 1; path.stroke(); drawFocus()
     }
 }
 
@@ -173,4 +174,14 @@ private final class ThemeCardLabel: NSTextField {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var canBecomeKeyView: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+final class AxonChoiceCardNativeButton: PreferencesRectNativeButton {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(selected || hovering || isHighlighted ? Palette.selected : Palette.sidebar).withAlphaComponent(isEnabled ? 1 : 0.45).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        AxonSelectionDrawing.mark(in: NSRect(x: 10, y: (bounds.height - 14) / 2, width: 14, height: 14), selected: selected, enabled: isEnabled)
+        drawText(title, rect: NSRect(x: 34, y: (bounds.height - 15) / 2, width: max(0, bounds.width - 44), height: 17), color: NSColor(Palette.text).withAlphaComponent(isEnabled ? 1 : 0.45), font: .systemFont(ofSize: 12))
+        drawFocus()
+    }
 }

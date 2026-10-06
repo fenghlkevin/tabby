@@ -33,9 +33,9 @@ struct AppActionMenu<Content: View, Label: View>: View {
     }
     var body: some View {
         Button { presented.toggle() } label: { label.contentShape(Rectangle()) }
-            .buttonStyle(.plain)
+            .buttonStyle(AxonSurfaceButtonStyle())
             .background(insideMenu && hovering ? Palette.selected : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
             .onHover { hovering in
                 guard insideMenu else { return }
                 self.hovering = hovering
@@ -70,11 +70,11 @@ private struct ActionMenuRowStyle: PrimitiveButtonStyle {
             Button { dismiss(); configuration.trigger() } label: {
                 configuration.label.frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
                     .padding(.horizontal, 10).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(AxonSurfaceButtonStyle())
                 .foregroundStyle(configuration.role == .destructive ? Color.red : Palette.text)
                 .opacity(enabled ? 1 : 0.45)
                 .background(hovering && enabled ? Palette.selected : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
                 .onHover { hovering = $0 }
         }
     }

@@ -75,11 +75,12 @@ enum ConnectionValidation {
         var value = original
         value.name = try label(value.name, required: true, chinese: chinese)
         value.username = try username(value.username, chinese: chinese)
+        guard value.auth == "password" || value.auth == "key" else { throw failure("Select password or private-key authentication", "请选择密码或私钥认证", chinese: chinese) }
         try authentication(value.auth, source: value.keySource, path: value.keyPath, chinese: chinese)
         return value
     }
     private static func authentication(_ auth: String, source: String?, path: String, chinese: Bool) throws {
-        guard auth == "password" || auth == "key" else { throw failure("Select password or private-key authentication", "请选择密码或私钥认证", chinese: chinese) }
+        guard auth == "password" || auth == "key" || auth == "agent" else { throw failure("Select password, private-key or SSH Agent authentication", "请选择密码、私钥或 SSH Agent 认证", chinese: chinese) }
         if auth == "key" {
             guard source == nil || source == "file" || source == "text" else { throw failure("Select a private-key file or pasted text", "请选择私钥文件或粘贴文本", chinese: chinese) }
             if source != "text" { _ = try keyPath(path, required: true, chinese: chinese) }
@@ -93,6 +94,14 @@ enum ConnectionValidation {
             throw failure("The group's shared identity no longer exists", "分组的共享凭据已不存在", chinese: chinese)
         }
         var host = GroupDefaults.resolved(original, workspace: workspace)
+        if let path = host.certificatePath {
+            _ = try keyPath(path, required: true, chinese: chinese)
+            guard path.hasPrefix("/"), host.auth != "password", let authority = host.certificateAuthorityPath, authority.hasPrefix("/") else { throw failure("Select a user certificate and trusted CA public key with public-key authentication", "使用公钥认证，并选择用户证书和受信 CA 公钥", chinese: chinese) }
+            _ = try keyPath(authority, required: true, chinese: chinese)
+        }
+        if let path = host.hostCertificateAuthorityPath, !path.isEmpty { _ = try keyPath(path, required: true, chinese: chinese); guard path.hasPrefix("/") else { throw failure("Choose an absolute CA public-key path", "请选择 CA 公钥的绝对路径", chinese: chinese) } }
+        if host.forwardAgent == true, host.agentFingerprint == nil { throw failure("Select the Agent identity to forward", "请选择要转发的 Agent 身份", chinese: chinese) }
+
         host.name = try label(host.name, chinese: chinese)
         host.group = try label(host.group, chinese: chinese)
         host.tags = try label(host.tags, chinese: chinese)

@@ -80,7 +80,7 @@ struct GroupPicker: View {
     var body: some View {
         NativeSelectionField(title: selection.isEmpty ? (chinese ? "无分组" : "Ungrouped") : selection,
                              symbol: "folder", label: chinese ? "选择分组" : "Choose group", identifier: "host-group-picker") { button in
-            makeMenu(width: button.bounds.width).popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 3), in: button)
+            AxonMenuPopover.show(makeMenu(width: button.bounds.width), from: button)
         }
     }
     func makeMenu(width: CGFloat = 280) -> NSMenu {
@@ -89,6 +89,7 @@ struct GroupPicker: View {
         for group in values {
             let item = NSMenuItem(title: group.isEmpty ? (chinese ? "无分组" : "Ungrouped") : group, action: #selector(SelectionMenuAction.selectGroup(_:)), keyEquivalent: "")
             let action = SelectionMenuAction { selection = group }
+            item.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
             item.target = action; item.representedObject = action; item.state = CatalogNames.matches(selection, group) ? .on : .off
             menu.addItem(item)
         }
@@ -153,7 +154,7 @@ struct JumpHostChooser: View {
             }.padding(.horizontal, 10).frame(height: 34).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
             Button { select(nil) } label: {
                 HStack { Image(systemName: "network"); Text(chinese ? "无跳板机（直接连接）" : "None — connect directly"); Spacer(); if selection == nil { Image(systemName: "checkmark").foregroundStyle(Palette.accent) } }.padding(10).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(AxonSurfaceButtonStyle())
             Divider()
             ScrollView {
                 LazyVStack(spacing: 4) {
@@ -168,7 +169,7 @@ struct JumpHostChooser: View {
                                 Spacer()
                                 if selection == candidate.id { Image(systemName: "checkmark").foregroundStyle(Palette.accent) }
                             }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(selection == candidate.id ? Palette.selected : Palette.card).clipShape(RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(AxonSurfaceButtonStyle())
                     }
                     if matches.isEmpty { Text(chinese ? "没有可用的跳板机" : "No available jump hosts").foregroundStyle(Palette.muted).padding(20) }
                 }
@@ -186,17 +187,21 @@ struct AxonChoiceField<Value: Equatable>: View {
     let placeholder: String
     let symbol: String
     let identifier: String
+    var menuTitle: String? = nil
+    var descriptions: [String: String] = [:]
     var body: some View {
         NativeSelectionField(title: choices.first { $0.0 == selection }?.1 ?? placeholder,
                              symbol: symbol, label: placeholder, identifier: identifier) { button in
-            makeMenu(width: button.bounds.width).popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 3), in: button)
+            AxonMenuPopover.show(makeMenu(width: button.bounds.width), from: button)
         }
     }
     func makeMenu(width: CGFloat) -> NSMenu {
-        let menu = NSMenu(); menu.autoenablesItems = false; menu.minimumWidth = width
+        let menu = NSMenu(title: menuTitle ?? ""); menu.autoenablesItems = false; menu.minimumWidth = width
         for (value, title) in choices {
             let item = NSMenuItem(title: title, action: #selector(SelectionMenuAction.selectGroup(_:)), keyEquivalent: "")
             let action = SelectionMenuAction { selection = value }
+            item.toolTip = descriptions[title]
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             item.target = action; item.representedObject = action; item.state = selection == value ? .on : .off
             menu.addItem(item)
         }

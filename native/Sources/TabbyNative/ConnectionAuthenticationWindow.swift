@@ -163,7 +163,7 @@ struct ConnectionAuthenticationView: View {
                     }
                     if model.draft.canRemember(in: store.workspace) {
                         Toggle(shared ? store.text("Remember shared credentials in Keychain", "将共享凭据保存到钥匙串") : store.text("Remember credentials for this host", "记住此主机的凭据"), isOn: $model.draft.remember)
-                            .toggleStyle(.checkbox).font(.system(size: 12))
+                            .toggleStyle(AxonCheckboxStyle()).font(.system(size: 12))
                         if shared && model.draft.remember {
                             Text(store.text("Saved changes apply to every host using this shared credential.", "保存后的凭据供所有使用它的主机使用。"))
                                 .font(.system(size: 11)).foregroundStyle(Palette.muted)

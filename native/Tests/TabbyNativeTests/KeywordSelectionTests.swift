@@ -41,6 +41,15 @@ import SwiftUI
                     }
                 }
                 try capture(hosting, path: "/private/tmp/axon-keyword-choice-\(Int(width))-\(index).png")
+                if index == 0 {
+                    let actual = try XCTUnwrap(fields.first)
+                    actual.performClick(nil); try await Task.sleep(for: .milliseconds(180))
+                    let popup = try XCTUnwrap(AxonMenuPopover.active)
+                    XCTAssertEqual(popup.menu.title, "作用范围")
+                    XCTAssertEqual(popup.menu.items.map(\.toolTip), ["所有终端会话", "所选分组中的主机", "仅所选主机"])
+                    try capture(try XCTUnwrap(popup.popover.contentViewController?.view.window?.contentView), path: "/private/tmp/axon-keyword-scope-labelled-\(Int(width)).png")
+                    XCTAssertTrue(popup.handleKey(53))
+                }
             }
         }
         let group = Binding(get: { store.workspace.preferences.keywordRules[0].group }, set: { store.workspace.preferences.keywordRules[0].group = $0 })

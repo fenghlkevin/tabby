@@ -133,6 +133,9 @@ class NativeSessionTabView: NSView, NSDraggingSource {
         beginTabDrag(with: event)
     }
     override func mouseUp(with event: NSEvent) {
+        // AppKit can deliver mouseUp before the native dragging session ends.
+        // Keep the source window locked until draggingSession(endedAt:) completes.
+        guard !dragStarted else { return }
         defer { resetPointer() }
         let point = convert(event.locationInWindow, from: nil)
         guard !dragStarted, bounds.contains(point), let downAction, pointerAction(at: point) == downAction else { return }
@@ -159,8 +162,9 @@ class NativeSessionTabView: NSView, NSDraggingSource {
         context == .withinApplication ? .move : []
     }
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        resetPointer(); dropPlacement = nil; needsDisplay = true
+        finishTabDrag()
     }
+    func finishTabDrag() { resetPointer(); dropPlacement = nil; needsDisplay = true }
     func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 
     private func droppedSession(_ sender: NSDraggingInfo) -> UUID? {
@@ -236,7 +240,7 @@ class NativeSessionTabView: NSView, NSDraggingSource {
     }
     override func accessibilityPerformPress() -> Bool { onAction?(.select); return true }
     override func accessibilityPerformShowMenu() -> Bool {
-        makeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 3), in: self)
+        AxonMenuPopover.show(makeMenu(), from: self)
         return true
     }
     override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); needsDisplay = true; return result }

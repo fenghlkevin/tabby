@@ -119,24 +119,24 @@ final class RecentTargetsTests: XCTestCase {
         let target = try XCTUnwrap(store.recentTargets.first)
         store.openLauncher()
         XCTAssertTrue(store.openRecent(target))
-        XCTAssertEqual(store.activeSession, original.id)
-        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertNotEqual(store.activeSession, original.id)
+        XCTAssertEqual(store.sessions.count, 2)
         store.workspace.credentials[0].username = "new-user"
         XCTAssertTrue(store.openRecent(target))
-        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertEqual(store.sessions.count, 3)
         XCTAssertNotEqual(store.activeSession, original.id)
         let updatedIdentity = try XCTUnwrap(store.sessions.last)
         XCTAssertEqual(updatedIdentity.authenticatedUsername, "new-user")
         updatedIdentity.connected = true
         store.workspace.hosts[0].address = "changed.invalid"; store.workspace.hosts[0].port = 2222
         XCTAssertTrue(store.openRecent(target))
-        XCTAssertEqual(store.sessions.count, 3)
+        XCTAssertEqual(store.sessions.count, 4)
         let current = try XCTUnwrap(store.sessions.last)
         XCTAssertEqual(current.host?.address, "changed.invalid")
         XCTAssertEqual(current.host?.port, 2222)
         current.terminal = TerminalView(frame: .zero); current.connected = false
         XCTAssertTrue(store.openRecent(target))
-        XCTAssertEqual(store.sessions.count, 4) // A finished terminal must be reopened, not merely focused.
+        XCTAssertEqual(store.sessions.count, 5) // A finished terminal must be reopened, not merely focused.
         for session in Array(store.sessions) { store.close(session.id) }
         XCTAssertTrue(store.openRecent(target))
         XCTAssertEqual(store.sessions.count, 1)
@@ -315,8 +315,9 @@ final class RecentTargetsTests: XCTestCase {
         XCTAssertNotEqual(newlyResolved.id, original.id)
         XCTAssertEqual(newlyResolved.credentialID, original.credentialID)
         XCTAssertTrue(store.openRecent(ssh))
-        XCTAssertEqual(store.sessions.count, 1)
-        XCTAssertEqual(store.activeSession, session.id)
+        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertNotEqual(store.activeSession, session.id)
+        XCTAssertEqual(store.sessions.last?.host?.credentialID, identity.id)
         var opened = 0
         let files = FileManagerModel(session: session, remoteOpener: { _ in
             opened += 1; return FileEndpointLease(pane: FilePane(path: "/remote", backend: EmptyEndpoint()))

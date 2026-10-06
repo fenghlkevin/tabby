@@ -155,8 +155,9 @@ enum WorkspaceArchiveCodec {
         guard archive.createdAt.timeIntervalSince1970.isFinite else { throw WorkspaceArchiveError.invalidArchive }
         let workspace = archive.workspace
         let allIDs = workspace.hosts.map(\.id) + workspace.credentials.map(\.id) + workspace.groupDefaults.map(\.id)
-            + workspace.forwards.map(\.id) + workspace.snippets.map(\.id) + workspace.workScenes.map(\.id)
+            + workspace.forwards.map(\.id) + workspace.snippets.map(\.id) + workspace.workScenes.map(\.id) + workspace.batchTemplates.map(\.id)
         guard Set(allIDs).count == allIDs.count else { throw WorkspaceArchiveError.duplicateIdentifier }
+        for template in workspace.batchTemplates { _ = try template.validated(chinese: false) }
         let hostIDs = Set(workspace.hosts.map(\.id))
         let credentialIDs = Set(workspace.credentials.map(\.id))
         let secretIDs = hostIDs.union(credentialIDs).union(workspace.groupDefaults.map(\.id))
@@ -220,6 +221,7 @@ enum WorkspaceArchiveCodec {
               ApplicationIconAppearance.styles.contains(value.applicationIcon) else {
             throw failure("Unknown language or application icon")
         }
+        if let issue = ShortcutBinding.validationIssue(value, chinese: false) { throw failure(issue) }
         _ = try ConnectionValidation.label(value.fontName, required: true)
         guard value.fontName.count <= 256, value.fontSize.isFinite, (10...40).contains(value.fontSize),
               (0...1_000_000).contains(value.scrollback), (1...120).contains(value.sshConnectTimeout) else {
@@ -252,7 +254,7 @@ enum WorkspaceArchiveCodec {
         guard encrypted || raw["secrets"] == nil else { throw WorkspaceArchiveError.invalidArchive }
         guard let workspace = raw["workspace"] as? [String: Any],
               Set(workspace.keys).isSuperset(of: Set(["hosts", "groups", "groupDefaults", "tags", "credentials", "forwards", "logs", "snippets", "recentTargets", "preferences", "bookmarks", "trustedKeys"])),
-              Set(workspace.keys).isSubset(of: Set(["hosts", "groups", "groupDefaults", "tags", "credentials", "forwards", "logs", "snippets", "workScenes", "recentTargets", "preferences", "bookmarks", "trustedKeys"])) else {
+              Set(workspace.keys).isSubset(of: Set(["hosts", "groups", "groupDefaults", "tags", "credentials", "forwards", "logs", "snippets", "workScenes", "batchTemplates", "recentTargets", "preferences", "bookmarks", "trustedKeys"])) else {
             throw WorkspaceArchiveError.invalidArchive
         }
         guard workspace["groups"] is [String], workspace["tags"] is [String],
@@ -272,7 +274,7 @@ enum WorkspaceArchiveCodec {
         // when opening legacy local files. Full archive restoration must never
         // silently replace missing configuration with those defaults.
         guard Set(preferences.keys).isSuperset(of: requiredPreferences),
-              Set(preferences.keys).isSubset(of: requiredPreferences.union(["ansiColors", "keywordRules", "commandHistoryLimit", "commandHistoryExclusions", "commandCompletionNotifications"])),
+              Set(preferences.keys).isSubset(of: requiredPreferences.union(["shortcuts", "ansiColors", "keywordRules", "commandHistoryLimit", "commandHistoryExclusions", "commandCompletionNotifications"])),
               !preferences.values.contains(where: { $0 is NSNull }) else {
             throw WorkspaceArchiveError.invalidArchive
         }

@@ -44,7 +44,7 @@ struct TagsEditor: View {
                             Text(tag).font(.system(size: 12)).lineLimit(1)
                             Button { tags = TagTokens.removing(tag, from: tags) } label: {
                                 Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).frame(width: 18, height: 22)
-                            }.buttonStyle(.plain).accessibilityLabel(text("Remove tag \(tag)", "移除标签 \(tag)"))
+                            }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel(text("Remove tag \(tag)", "移除标签 \(tag)"))
                         }.foregroundStyle(Palette.blue).padding(.leading, 9).padding(.trailing, 3)
                             .background(Palette.selected).clipShape(Capsule())
                     }
@@ -55,7 +55,7 @@ struct TagsEditor: View {
                               label: text("New tag", "新标签"), onInput: consume, onSubmit: commit)
                     .appInput().accessibilityIdentifier("axon-tag-input")
                 Button(action: commit) { Image(systemName: "plus").font(.system(size: 13, weight: .semibold)).frame(width: 32, height: 38) }
-                    .buttonStyle(.plain).foregroundStyle(Palette.accent).background(Palette.field)
+                    .buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.accent).background(Palette.field)
                     .clipShape(RoundedRectangle(cornerRadius: 8)).disabled(TagTokens.parse(pending).isEmpty)
                     .accessibilityLabel(text("Add tag", "添加标签")).help(text("Add tag", "添加标签"))
             }
@@ -66,7 +66,7 @@ struct TagsEditor: View {
                     ForEach(Array(available.prefix(8)), id: \.self) { tag in
                         Button { tags = TagTokens.committing(tags, draft: tag); pending = "" } label: {
                             Label(tag, systemImage: "plus").font(.system(size: 11)).padding(.horizontal, 8).frame(height: 24)
-                        }.buttonStyle(.plain).foregroundStyle(Palette.muted)
+                        }.buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.muted)
                             .background(Palette.field).clipShape(Capsule())
                             .accessibilityLabel(text("Add existing tag \(tag)", "添加已有标签 \(tag)"))
                     }

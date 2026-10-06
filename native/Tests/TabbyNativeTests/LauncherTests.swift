@@ -38,18 +38,23 @@ final class LauncherTests: XCTestCase {
         XCTAssertTrue(HostLibraryCatalog(hosts: values, group: "Development", favoritesOnly: true).visibleHosts.isEmpty)
         XCTAssertTrue(HostLibraryCatalog(hosts: values, group: "Production", query: "personal").visibleHosts.isEmpty)
     }
-    func testSearchFindsGroupsByHostAddressTagsAndGroupName() {
+    func testSearchListsHostsByAddressTagsAndGroupNameWithoutFolders() {
         let first = host("api", group: "Production", address: "192.0.2.10", tags: "backend")
         let second = host("db", group: "Production", address: "192.0.2.11", tags: "database")
         let personal = host("other", tags: "backend")
         let values = [first, second, personal]
         let byTag = LauncherCatalog(hosts: values, groups: [], query: "backend", selectedGroup: nil)
-        XCTAssertEqual(byTag.visibleGroups, ["Production"])
-        XCTAssertEqual(byTag.visibleHosts.map(\.id), [personal.id])
+        XCTAssertTrue(byTag.visibleGroups.isEmpty)
+        XCTAssertEqual(Set(byTag.visibleHosts.map(\.id)), Set([first.id, personal.id]))
         let withinGroup = LauncherCatalog(hosts: values, groups: [], query: "192.0.2.11", selectedGroup: "Production")
         XCTAssertEqual(withinGroup.visibleHosts.map(\.id), [second.id])
         let byName = LauncherCatalog(hosts: values, groups: [], query: " production ", selectedGroup: "Production")
         XCTAssertEqual(Set(byName.visibleHosts.map(\.id)), Set([first.id, second.id]))
+        let rootGroupSearch = LauncherCatalog(hosts: values, groups: [], query: "production", selectedGroup: nil)
+        XCTAssertTrue(rootGroupSearch.visibleGroups.isEmpty)
+        XCTAssertEqual(Set(rootGroupSearch.visibleHosts.map(\.id)), Set([first.id, second.id]))
+        let addressSearch = LauncherCatalog(hosts: values, groups: [], query: "192.0.2.11", selectedGroup: nil)
+        XCTAssertEqual(addressSearch.visibleHosts.map(\.id), [second.id])
         let missing = LauncherCatalog(hosts: values, groups: [], query: "missing", selectedGroup: nil)
         XCTAssertTrue(missing.visibleGroups.isEmpty); XCTAssertTrue(missing.visibleHosts.isEmpty)
     }
@@ -89,6 +94,25 @@ final class LauncherTests: XCTestCase {
         store.openLauncher()
         XCTAssertEqual(store.launcherRequest, 2); XCTAssertEqual(store.sessions.count, 1); XCTAssertEqual(store.activeSession, id)
     }
+    @MainActor func testOpeningTerminalConsumesLauncherButSwitchingPagesKeepsIt() {
+        let store = AppStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        store.openLauncher()
+        XCTAssertTrue(store.newTabOpen)
+        store.section = "hosts"
+        XCTAssertTrue(store.newTabOpen)
+        store.openLauncher()
+        var host = TabbyNative.Host(); host.name = "Launcher fixture"; host.address = "fixture.invalid"
+        store.connect(host)
+        XCTAssertFalse(store.newTabOpen)
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.sessions.last?.host?.id, host.id)
+        store.openLauncher()
+        store.connect()
+        XCTAssertFalse(store.newTabOpen)
+        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertNil(store.sessions.last?.host)
+    }
+
     @MainActor func testReorderingTabsPreservesSessionAndSplitIdentity() {
         let store = AppStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         store.connect(); let first = store.sessions[0]

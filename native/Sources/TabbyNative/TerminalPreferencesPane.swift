@@ -95,7 +95,7 @@ struct TerminalFontPicker: View {
     let chinese: Bool
     var body: some View {
         NativeSelectionField(title: selection, symbol: "textformat", label: chinese ? "选择终端字体" : "Choose terminal font", identifier: "axon-terminal-font-picker") { button in
-            makeMenu(width: button.bounds.width).popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 3), in: button)
+            AxonMenuPopover.show(makeMenu(width: button.bounds.width), from: button)
         }
     }
     @MainActor func makeMenu(width: CGFloat = 280) -> NSMenu {
@@ -217,7 +217,7 @@ struct TerminalCursorShapeButton: NSViewRepresentable {
     let selected: Bool
     let identifier: String
     let action: () -> Void
-    func makeNSView(context: Context) -> PreferencesRectNativeButton { PreferencesRectNativeButton() }
+    func makeNSView(context: Context) -> PreferencesRectNativeButton { AxonChoiceCardNativeButton() }
     func updateNSView(_ button: PreferencesRectNativeButton, context: Context) {
         button.title = title; button.selected = selected; button.prominent = selected; button.actionBlock = action
         button.identifier = NSUserInterfaceItemIdentifier(identifier); button.setAccessibilityLabel(title)
@@ -238,13 +238,9 @@ struct TerminalCursorBlinkButton: NSViewRepresentable {
 
 final class TerminalCursorBlinkNativeButton: PreferencesRectNativeButton {
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(hovering || isHighlighted ? Palette.selected : Palette.field).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
-        let checkbox = NSRect(x: 12, y: (bounds.height - 16) / 2, width: 16, height: 16)
-        NSColor(selected ? Palette.accent : Palette.card).setFill()
-        let path = NSBezierPath(roundedRect: checkbox, xRadius: 4, yRadius: 4); path.fill()
-        NSColor(selected ? Palette.accent : Palette.border).setStroke(); path.lineWidth = 1; path.stroke()
-        if selected { drawText("✓", rect: checkbox, color: .white, font: .systemFont(ofSize: 12, weight: .semibold), centered: true) }
+        NSColor(selected || hovering || isHighlighted ? Palette.selected : Palette.sidebar).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        AxonSelectionDrawing.mark(in: NSRect(x: 12, y: (bounds.height - 14) / 2, width: 14, height: 14), selected: selected, enabled: isEnabled)
         drawText(title, rect: NSRect(x: 38, y: (bounds.height - 15) / 2, width: max(0, bounds.width - 50), height: 17), color: NSColor(Palette.text), font: .systemFont(ofSize: 12))
         drawFocus()
     }

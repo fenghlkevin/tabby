@@ -326,7 +326,7 @@ struct MonitoringProcessesView: View {
                             Text(MonitoringPresentation.bytes(process.memoryBytes)).monospacedDigit().frame(width: 82, alignment: .trailing)
                             Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Palette.muted).frame(width: 14)
                         }.font(.system(size: 11)).padding(.vertical, 7).contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityLabel(store.text("Process details: \(process.command), PID \(process.pid)", "进程详情：\(process.command)，PID \(process.pid)"))
+                    }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel(store.text("Process details: \(process.command), PID \(process.pid)", "进程详情：\(process.command)，PID \(process.pid)"))
                     Divider()
                 }
                 if visible.isEmpty { Text(store.text("No matching processes", "没有匹配的进程")).foregroundStyle(Palette.muted).padding(.vertical, 16) }
@@ -339,7 +339,7 @@ struct MonitoringProcessesView: View {
             if sort == key { descending.toggle() } else { sort = key; descending = key == .cpu || key == .memory }
         } label: {
             HStack(spacing: 4) { Text(title); if sort == key { Image(systemName: descending ? "arrow.down" : "arrow.up").font(.system(size: 8)) } }
-        }.buttonStyle(.plain).accessibilityLabel(title + (sort == key ? store.text(descending ? ", descending" : ", ascending", descending ? "，降序" : "，升序") : ""))
+        }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel(title + (sort == key ? store.text(descending ? ", descending" : ", ascending", descending ? "，降序" : "，升序") : ""))
     }
 }
 
@@ -372,9 +372,7 @@ struct MonitoringGPUView: View {
     var body: some View {
         MonitoringPanel(title: "GPU", symbol: "cpu") {
             if let gpu = selected {
-                Picker(store.text("GPU device", "GPU 设备"), selection: Binding(get: { selected?.uuid ?? "" }, set: { selectedID = $0 })) {
-                    ForEach(snapshot.gpus) { value in Text("GPU \(value.index) · \(value.name)").tag(value.uuid) }
-                }.pickerStyle(.menu)
+                AxonChoiceField(selection: Binding(get: { selected?.uuid ?? "" }, set: { selectedID = $0 }), choices: snapshot.gpus.map { ($0.uuid, "GPU \($0.index) · \($0.name)") }, placeholder: store.text("GPU device", "GPU 设备"), symbol: "cpu", identifier: "axon-gpu-device")
                 Text(gpu.name).font(.system(size: 14, weight: .semibold))
                 MonitoringValue(label: store.text("Driver", "驱动"), value: gpu.driverVersion ?? "—")
                 MonitoringValue(label: store.text("Driver CUDA support", "驱动支持的 CUDA"), value: gpu.cudaVersion ?? "—")

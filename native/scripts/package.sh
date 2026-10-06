@@ -7,7 +7,7 @@ products="$(swift build --package-path "$project_root" -c "$configuration" --sho
 app="$project_root/dist/Axon.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 # A launched build may have a Finder custom icon. Keep the distributable clean;
-# the application restores the saved choice when it launches after installation.
+# install-current.py restores the saved choice before first launch.
 rm -f "$app"/$'Icon\r'
 xattr -d com.apple.FinderInfo "$app" 2>/dev/null || true
 cp "$products/TabbyNative" "$app/Contents/MacOS/TabbyNative"
@@ -18,7 +18,7 @@ for obsolete_icon in "$app/Contents/Resources"/AppIcon-*.icns(N); do
     rm -f "$obsolete_icon"
 done
 # A versioned icon resource lets LaunchServices distinguish the updated artwork.
-cp "$project_root/Branding/AppIcon.icns" "$app/Contents/Resources/AppIcon-94.icns"
+cp "$project_root/Branding/AppIcon.icns" "$app/Contents/Resources/AppIcon-122.icns"
 for resource in "$products"/*.bundle(N); do
     ditto "$resource" "$app/Contents/Resources/${resource:t}"
 done
@@ -31,9 +31,9 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Axon</string>
 <key>CFBundleDisplayName</key><string>Axon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.9.21</string>
-<key>CFBundleVersion</key><string>94</string>
-<key>CFBundleIconFile</key><string>AppIcon-94</string>
+<key>CFBundleShortVersionString</key><string>0.10.27</string>
+<key>CFBundleVersion</key><string>122</string>
+<key>CFBundleIconFile</key><string>AppIcon-122</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>CFBundleDevelopmentRegion</key><string>en</string>
@@ -52,6 +52,6 @@ fi
 codesign --force --deep --sign "$signing_identity" "$app"
 codesign --verify --deep --strict "$app"
 if [[ "$configuration" == release ]]; then
-    ditto -c -k --sequesterRsrc --keepParent "$app" "$project_root/dist/Axon-0.9.21-mac-arm64.zip"
+    ditto -c -k --sequesterRsrc --keepParent "$app" "$project_root/dist/Axon-0.10.27-mac-arm64.zip"
 fi
 print "$app"

@@ -162,7 +162,7 @@ struct SnippetsView: View {
                                     Text("\(store.workspace.snippets.filter { $0.group == name }.count)").foregroundStyle(Palette.muted)
                                     Image(systemName: "chevron.right").foregroundStyle(Palette.muted)
                                 }.padding(14).contentShape(Rectangle()).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
-                            }.buttonStyle(.plain).appContextMenu {
+                            }.buttonStyle(AxonSurfaceButtonStyle()).appContextMenu {
                                 Button(store.text("Rename group", "重命名分组")) { newGroupName = name; renaming = name }
                                 Button(store.text("Remove group, keep snippets", "取消分组，保留片段")) { perform { try store.ungroupSnippets(name) } }
                             }
@@ -184,9 +184,10 @@ struct SnippetsView: View {
             .sheet(item: $editing) { SnippetEditor(value: $0).environmentObject(store) }
             .sheet(item: $sending) { SnippetSendSheet(snippet: $0).environmentObject(store) }
             .appAlert(store.text("Rename group", "重命名分组"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-                TextField(store.text("Name", "名称"), text: $newGroupName)
-                Button(store.text("Cancel", "取消"), role: .cancel) { renaming = nil }
-                Button(store.text("Save", "保存")) { if let name = renaming { perform { try store.renameSnippetGroup(name, to: newGroupName) } }; renaming = nil }
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) { renaming = nil }
+                AppAlertButton(store.text("Save", "保存")) { if let name = renaming { perform { try store.renameSnippetGroup(name, to: newGroupName) } }; renaming = nil }
+            } message: {
+                TextField(store.text("Name", "名称"), text: $newGroupName).appInput()
             }
     }
     func snippetRow(_ value: CommandSnippet) -> some View {
@@ -198,7 +199,7 @@ struct SnippetsView: View {
                     Text(value.body).font(.system(size: 12, design: .monospaced)).lineLimit(2).foregroundStyle(Palette.muted)
                     if !value.notes.isEmpty { Text(value.notes).font(.system(size: 11)).lineLimit(1).foregroundStyle(Palette.muted) }
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(AxonSurfaceButtonStyle())
             Button(store.text("Use", "使用")) { sending = value }.buttonStyle(ChromeButtonStyle())
             AppActionMenu {
                 Button { editing = value } label: { Label(store.text("Edit", "编辑"), systemImage: "square.and.pencil") }
@@ -221,10 +222,18 @@ struct SnippetsView: View {
             }
     }
     func perform(_ action: () throws -> Void) { do { try action() } catch { store.error = error.localizedDescription } }
-    func deleteSnippet(_ value: CommandSnippet) {
-        let alert = AppModalAlert(); alert.messageText = store.text("Delete snippet?", "删除代码片段？"); alert.informativeText = value.name
-        alert.addButton(withTitle: store.text("Delete", "删除")); alert.addButton(withTitle: store.text("Cancel", "取消"))
-        if alert.runModal() == .alertFirstButtonReturn { perform { try store.removeSnippet(value.id) } }
+    func deleteSnippet(_ value: CommandSnippet) { store.confirmSnippetDeletion(value) }
+
+}
+
+@MainActor extension AppStore {
+    func confirmSnippetDeletion(_ value: CommandSnippet) {
+        let alert = AppModalAlert(); alert.destructive = true
+        alert.messageText = text("Delete snippet?", "删除代码片段？"); alert.informativeText = value.name
+        alert.addButton(withTitle: text("Delete", "删除")); alert.addButton(withTitle: text("Cancel", "取消"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            do { try removeSnippet(value.id) } catch { self.error = error.localizedDescription }
+        }
     }
 }
 
@@ -258,10 +267,8 @@ struct SnippetEditor: View {
                                 HStack {
                                     Text("{{\(parameter.name)}}").font(.system(size: 12, weight: .medium, design: .monospaced))
                                     Spacer()
-                                    Picker(store.text("Type", "类型"), selection: $parameter.type) {
-                                        ForEach(SnippetParameterType.allCases, id: \.self) { type in Text(type.title(chinese: store.chinese)).tag(type) }
-                                    }.labelsHidden().frame(width: 90)
-                                    Toggle(store.text("Required", "必填"), isOn: $parameter.required).toggleStyle(.checkbox).font(.system(size: 11))
+                                    AxonChoiceField(selection: $parameter.type, choices: SnippetParameterType.allCases.map { ($0, $0.title(chinese: store.chinese)) }, placeholder: store.text("Type", "类型"), symbol: "textformat", identifier: "axon-snippet-parameter-type").frame(width: 130)
+                                    Toggle(store.text("Required", "必填"), isOn: $parameter.required).toggleStyle(AxonCheckboxStyle()).font(.system(size: 11))
                                 }
                                 TextField(store.text("Default value (optional)", "默认值（可选）"), text: $parameter.defaultValue).appInput()
                             }.padding(10).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -322,19 +329,19 @@ struct SnippetSendSheet: View {
             ScrollView { Text(expandedCommand ?? snippet.body).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(12) }
                 .frame(height: 145).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
             if case .failure(let validationError) = expansion { Text(validationError.localizedDescription).font(.system(size: 11)).foregroundStyle(.red) }
-            HStack { Text(store.text("Connected terminals", "已连接终端")).font(.system(size: 12, weight: .medium)); Spacer(); Button(store.text("Select all", "全选")) { selected = Set(connected.map(\.id)) }.buttonStyle(.plain).foregroundStyle(Palette.accent).disabled(connected.isEmpty) }
+            HStack { Text(store.text("Connected terminals", "已连接终端")).font(.system(size: 12, weight: .medium)); Spacer(); Button(store.text("Select all", "全选")) { selected = Set(connected.map(\.id)) }.buttonStyle(ChromeButtonStyle()).foregroundStyle(Palette.accent).disabled(connected.isEmpty) }
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(connected) { session in
                         Button { if !selected.insert(session.id).inserted { selected.remove(session.id) } } label: {
                             HStack(spacing: 10) {
-                                Image(systemName: selected.contains(session.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(selected.contains(session.id) ? Palette.accent : Palette.muted)
+                                AxonSelectionMark(selected: selected.contains(session.id))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(session.displayTitle).lineLimit(1).truncationMode(.middle)
                                     Text(session.host.map { "\($0.address):\($0.port)" } ?? store.text("Local terminal", "本地终端")).font(.system(size: 11)).foregroundStyle(Palette.muted)
                                 }; Spacer()
-                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(selected.contains(session.id) ? Palette.selected : Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(.plain)
+                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(selected.contains(session.id) ? Palette.selected : Palette.sidebar).clipShape(RoundedRectangle(cornerRadius: 8))
+                        }.buttonStyle(AxonSurfaceButtonStyle())
                     }
                     if connected.isEmpty { Text(store.text("Open a local terminal or connect to a host first.", "请先打开本地终端或连接主机。 ")).foregroundStyle(Palette.muted).padding(12) }
                 }
@@ -352,8 +359,8 @@ struct SnippetSendSheet: View {
         }.padding(24).frame(width: 570).foregroundStyle(Palette.text).background(Palette.sidebar)
             .onAppear { if let id = preferredSessionID ?? store.activeSession, connected.contains(where: { $0.id == id }) { selected = [id] } }
             .appAlert(store.text("Run snippet?", "运行代码片段？"), isPresented: $confirmingRun) {
-                Button(store.text("Cancel", "取消"), role: .cancel) {}
-                Button(store.text("Run", "运行")) { send(.run) }
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
+                AppAlertButton(store.text("Run", "运行")) { send(.run) }
             } message: {
                 Text(store.text("Run \"\(snippet.name)\" in \(targets.count) terminal(s):", "在 \(targets.count) 个终端运行「\(snippet.name)」：") + "\n" + targets.map { session in session.displayTitle + (session.host.map { " · \($0.address):\($0.port)" } ?? "") }.joined(separator: "\n"))
             }
@@ -395,7 +402,7 @@ struct SnippetTerminalPanel: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                         .overlay(RoundedRectangle(cornerRadius: 7).stroke(TerminalChrome.accent.opacity(0.2), lineWidth: 1))
                         .contentShape(Rectangle())
-                }.buttonStyle(.plain).help(store.text("New snippet", "新建片段")).accessibilityLabel(store.text("New snippet", "新建片段"))
+                }.buttonStyle(AxonSurfaceButtonStyle()).help(store.text("New snippet", "新建片段")).accessibilityLabel(store.text("New snippet", "新建片段"))
             }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(TerminalChrome.muted)
@@ -444,7 +451,7 @@ struct SnippetTerminalPanel: View {
                         .background(TerminalChrome.card).clipShape(RoundedRectangle(cornerRadius: 11))
                         .overlay(RoundedRectangle(cornerRadius: 11).stroke(hoveredSnippet == value.id ? TerminalChrome.accent.opacity(0.55) : TerminalChrome.border.opacity(0.55), lineWidth: 1))
                         .contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }.buttonStyle(AxonSurfaceButtonStyle())
                     .onHover { hovering in hoveredSnippet = hovering ? value.id : (hoveredSnippet == value.id ? nil : hoveredSnippet) }
                     .animation(.easeOut(duration: 0.12), value: hoveredSnippet == value.id)
                     .appContextMenu {

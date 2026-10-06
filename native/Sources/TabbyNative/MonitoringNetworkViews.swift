@@ -39,9 +39,7 @@ struct MonitoringNetworkView: View {
             let periods = Array(Set(history.records.map(\.period))).sorted()
             let chosenPeriod = periods.contains(period) ? period : periods.first ?? ""
             if !periods.isEmpty {
-                Picker(store.text("Period", "时间范围"), selection: Binding(get: { chosenPeriod }, set: { period = $0 })) {
-                    ForEach(periods, id: \.self) { value in Text(periodTitle(value)).tag(value) }
-                }.pickerStyle(.menu)
+                AxonChoiceField(selection: Binding(get: { chosenPeriod }, set: { period = $0 }), choices: periods.map { ($0, periodTitle($0)) }, placeholder: store.text("Period", "时间范围"), symbol: "calendar", identifier: "axon-traffic-period")
                 Text(history.source).font(.system(size: 11)).foregroundStyle(Palette.muted)
                 let names = Array(Set(history.records.map(\.interface))).sorted()
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14, alignment: .top)], alignment: .leading, spacing: 14) {

@@ -85,6 +85,7 @@ struct TerminalThemeEditor: View {
     private let size: NSSize
     @State private var draft: TerminalThemeEditorDraft
     @State private var error = ""
+    @State private var columnHeight: CGFloat = 0
     @FocusState private var nameFocused: Bool
 
     init(request: TerminalThemeEditorRequest, chinese: Bool, persistsImmediately: Bool = false, save: @escaping (TerminalThemeEditorDraft) throws -> Void) {
@@ -99,15 +100,21 @@ struct TerminalThemeEditor: View {
             Rectangle().fill(Palette.border).frame(height: 1)
             ScrollView {
                 HStack(alignment: .top, spacing: 22) {
-                    previewColumn.frame(width: previewWidth)
-                    ansiColors.frame(maxWidth: .infinity)
+                    column(previewColumn).frame(width: previewWidth)
+                    column(ansiColors).frame(maxWidth: .infinity)
                 }.padding(22)
             }
             Rectangle().fill(Palette.border).frame(height: 1)
             footer
         }.frame(width: size.width, height: size.height).background(Palette.background).foregroundStyle(Palette.text)
+            .onPreferenceChange(ThemeEditorColumnHeight.self) { columnHeight = $0 }
             .accessibilityIdentifier("axon-theme-editor")
             .onAppear { nameFocused = true }
+    }
+    private func column<Content: View>(_ content: Content) -> some View {
+        content.padding(16).fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { geometry in Color.clear.preference(key: ThemeEditorColumnHeight.self, value: geometry.size.height) })
+            .frame(minHeight: columnHeight, alignment: .top).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
     }
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -152,7 +159,7 @@ struct TerminalThemeEditor: View {
     private var previewWidth: CGFloat { size.width >= 1100 ? 420 : size.width >= 960 ? 360 : 300 }
     private var previewPreferences: Preferences {
         var value = draft.palette
-        value.fontSize = size.width >= 1100 ? 14 : 12
+        value.fontSize = size.width >= 1100 ? 13 : 11
         return value
     }
     private var baseColors: some View {
@@ -161,13 +168,13 @@ struct TerminalThemeEditor: View {
             TerminalColorField(title: text("Text", "文字"), value: $draft.palette.foreground, identifier: "axon-theme-foreground")
             TerminalColorField(title: text("Background", "背景"), value: $draft.palette.background, identifier: "axon-theme-background")
             TerminalColorField(title: text("Cursor", "光标"), value: $draft.palette.cursorColor, identifier: "axon-theme-cursor")
-        }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
+        }
     }
     private var ansiColors: some View {
         let names = chinese ? ["黑", "红", "绿", "黄", "蓝", "紫", "青", "白"] : ["Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"]
         return VStack(alignment: .leading, spacing: 12) {
             Text(text("ANSI palette", "ANSI 调色板")).font(.system(size: 13, weight: .semibold))
-            HStack {
+            HStack(spacing: 12) {
                 Text(text("Normal · 0–7", "常规色 · 0–7")).frame(maxWidth: .infinity, alignment: .leading)
                 Text(text("Bright · 8–15", "高亮色 · 8–15")).frame(maxWidth: .infinity, alignment: .leading)
             }.font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.muted)
@@ -177,7 +184,7 @@ struct TerminalThemeEditor: View {
                     ansiField(index + 8, name: names[index])
                 }
             }
-        }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
+        }
     }
     private var footer: some View {
         HStack(spacing: 12) {
@@ -227,4 +234,9 @@ private struct ThemeEditorActionButton: NSViewRepresentable {
         button.keyEquivalent = keyEquivalent; button.keyEquivalentModifierMask = []
         button.setAccessibilityLabel(title); button.needsDisplay = true
     }
+}
+
+private struct ThemeEditorColumnHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

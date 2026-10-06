@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Citadel
 import Crypto
+import NIOSSH
 
 enum PrivateKeys {
     static func normalize(_ text: String) -> String {
@@ -9,7 +10,7 @@ enum PrivateKeys {
             .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
 
-    static func authentication(_ text: String, passphrase: String, username: String, chinese: Bool) throws -> SSHAuthenticationMethod {
+    static func authentication(_ text: String, passphrase: String, username: String, chinese: Bool, certificatePath: String? = nil, authorityPath: String? = nil) throws -> SSHAuthenticationMethod {
         let key = normalize(text)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AppFailure.message(chinese ? "请粘贴完整的私钥文本" : "Paste the complete private key text")
@@ -20,8 +21,16 @@ enum PrivateKeys {
         let decryptionKey = passphrase.isEmpty ? nil : Data(passphrase.utf8)
         do {
             switch try SSHKeyDetection.detectPrivateKeyType(from: key) {
-            case .ed25519: return .ed25519(username: username, privateKey: try Curve25519.Signing.PrivateKey(sshEd25519: key, decryptionKey: decryptionKey))
-            case .rsa: return .rsa(username: username, privateKey: try Insecure.RSA.PrivateKey(sshRsa: key, decryptionKey: decryptionKey))
+            case .ed25519:
+                let privateKey = NIOSSHPrivateKey(ed25519Key: try Curve25519.Signing.PrivateKey(sshEd25519: key, decryptionKey: decryptionKey))
+                let certificate = try SSHCertificates.read(certificatePath, authorityPath: authorityPath, username: username, key: privateKey.publicKey)
+                return .custom(CertificateKeyAuthentication(username: username, key: privateKey, certificate: certificate))
+            case .rsa:
+                SSHCertificates.registerRSA()
+                let rsa = try Insecure.RSA.PrivateKey(sshRsa: key, decryptionKey: decryptionKey)
+                let privateKey = NIOSSHPrivateKey(custom: rsa)
+                let certificate = try SSHCertificates.read(certificatePath, authorityPath: authorityPath, username: username, key: privateKey.publicKey)
+                return .custom(CertificateKeyAuthentication(username: username, key: privateKey, rsa: rsa, certificate: certificate))
             default: throw AppFailure.message(chinese ? "请使用 OpenSSH Ed25519 或 RSA 私钥" : "Use an OpenSSH Ed25519 or RSA private key")
             }
         } catch let error as AppFailure { throw error }

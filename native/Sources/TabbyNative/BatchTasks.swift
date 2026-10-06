@@ -34,6 +34,9 @@ enum BatchCommand {
 
 @MainActor final class BatchTaskCenter: ObservableObject {
     unowned let store: AppStore
+    let archive: BatchArchive
+    private var currentRun: BatchRun?
+    private var archiveTask: Task<Void, Never>?
     @Published var results: [BatchResult] = []
     @Published var command = ""
     @Published var concurrency = 3
@@ -45,7 +48,39 @@ enum BatchCommand {
     private var commandSnapshot = ""
     private var timeoutSnapshot = 60
     private var concurrencySnapshot = 3
-    init(store: AppStore) { self.store = store }
+    init(store: AppStore) {
+        self.store = store
+        archive = BatchArchive(fileURL: store.fileURL.deletingLastPathComponent().appendingPathComponent("batch-history.json"))
+    }
+    func archiveCurrent() {
+        guard var run = currentRun else { return }
+        run.results = results; if !running { run.finished = Date() }
+        currentRun = run
+        do { try archive.save(run) } catch { self.error = store.text("Could not save task history: ", "任务历史保存失败：") + error.localizedDescription }
+    }
+    private func queueArchive() {
+        guard archiveTask == nil else { return }
+        archiveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard let self else { return }; self.archiveTask = nil; self.archiveCurrent()
+        }
+    }
+    func retry(_ run: BatchRun) throws {
+        guard !running else { throw AppFailure.message(store.text("Wait for the current task", "请等待当前任务结束")) }
+        let failed = run.results.filter { ["failed", "timeout", "cancelled", "interrupted"].contains($0.state) }
+        guard !failed.isEmpty else { return }
+        var targets: [Host] = []
+        for result in failed {
+            guard let host = store.workspace.hosts.first(where: { $0.id == result.hostID }),
+                  let snapshot = run.targets.first(where: { $0.id == host.id }), snapshot.matches(host, workspace: store.workspace) else {
+                throw AppFailure.message(store.text("A target was removed or its endpoint changed. Load as a new task and review the targets.", "目标已删除或连接地址、账号、跳板发生变化。请载入为新任务，重新检查目标。"))
+            }
+            targets.append(host)
+        }
+        concurrency = run.concurrency; timeout = run.timeout; command = run.command
+        try start(hosts: targets, command: run.command)
+        currentRun?.parentID = run.id; archiveCurrent()
+    }
 
     func start(hosts selected: [Host], command: String) throws {
         guard !running, !selected.isEmpty, Set(selected.map(\.id)).count == selected.count, selected.count <= 256, (1...16).contains(concurrency), (1...3600).contains(timeout) else { throw AppFailure.message("Choose 1–256 hosts, concurrency 1–16 and timeout 1–3600 / 请选择 1–256 台主机、并发 1–16、超时 1–3600 秒") }
@@ -53,14 +88,21 @@ enum BatchCommand {
         self.hosts = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, $0) })
         commandSnapshot = command; timeoutSnapshot = timeout; concurrencySnapshot = concurrency
         results = selected.map { BatchResult(hostID: $0.id, hostName: $0.name.isEmpty ? $0.address : $0.name) }
-        error = ""; running = true; schedule()
+        error = ""; running = true
+        currentRun = BatchRun(title: String(command.split(separator: "\n").first ?? "Task").prefix(100).description,
+                              command: command, concurrency: concurrency, timeout: timeout,
+                              targets: selected.map { BatchTargetSnapshot($0, workspace: store.workspace) }, results: results)
+        archiveCurrent(); schedule()
+    }
+    var retryPreview: String {
+        (currentRun?.command ?? "") + "\n\n" + results.filter { ["failed", "timeout", "cancelled"].contains($0.state) }.map(\.hostName).joined(separator: "\n")
     }
     func retryFailed() {
         guard !running else { return }
-        for i in results.indices where ["failed", "timeout", "cancelled"].contains(results[i].state) {
-            results[i].state = "queued"; results[i].started = nil; results[i].finished = nil; results[i].exitCode = nil; results[i].output = ""; results[i].error = ""
+        if var run = currentRun {
+            run.results = results
+            do { try retry(run) } catch { self.error = error.localizedDescription }
         }
-        running = results.contains { $0.state == "queued" }; schedule()
     }
     func cancel(_ id: UUID) {
         guard let i = results.firstIndex(where: { $0.id == id }), ["queued", "running"].contains(results[i].state) else { return }
@@ -68,7 +110,7 @@ enum BatchCommand {
         if results[i].state == "queued" { results[i].state = "cancelled"; results[i].finished = Date() }
     }
     func cancelAll() { for result in results { cancel(result.id) }; schedule() }
-    private func update(_ id: UUID, _ edit: (inout BatchResult) -> Void) { if let index = results.firstIndex(where: { $0.id == id }) { edit(&results[index]) } }
+    private func update(_ id: UUID, _ edit: (inout BatchResult) -> Void) { if let index = results.firstIndex(where: { $0.id == id }) { edit(&results[index]); queueArchive() } }
     private func schedule() {
         while tasks.count < concurrencySnapshot, let result = results.first(where: { $0.state == "queued" }) {
             update(result.id) { $0.state = "running"; $0.started = Date() }
@@ -79,6 +121,7 @@ enum BatchCommand {
             }
         }
         running = !tasks.isEmpty || results.contains { $0.state == "queued" }
+        if !running { archiveCurrent() }
     }
     private func execute(_ result: BatchResult) async {
         guard !Task.isCancelled else { update(result.id) { $0.state = "cancelled"; $0.finished = Date() }; return }
@@ -145,6 +188,9 @@ struct BatchTasksView: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject var center: BatchTaskCenter
     @State private var selected = Set<UUID>()
+    @State private var library = "task"
+    @State private var editingTemplate: BatchTemplate?
+    @State private var selectedTemplate: BatchTemplate?
     @State private var search = ""
     @State private var showSelected = false
     @State private var hostPage = 0
@@ -153,6 +199,7 @@ struct BatchTasksView: View {
     @State private var snippetID: UUID?
     @State private var values: [String: String] = [:]
     @State private var confirming = false
+    @State private var confirmingRetry = false
     @State private var selectedResult: UUID?
     @State private var resultFilter = "all"
     @State private var timeoutValid = true
@@ -164,7 +211,7 @@ struct BatchTasksView: View {
     private var currentHostPage: Int { min(hostPage, hostPageCount - 1) }
     private var pagedHosts: [Host] { Array(hosts.dropFirst(currentHostPage * 12).prefix(12)) }
     private var snippet: CommandSnippet? { store.workspace.snippets.first { $0.id == snippetID } }
-    private var commandSnippet: CommandSnippet { var value = snippet ?? CommandSnippet(); value.body = center.command; return value }
+    private var commandSnippet: CommandSnippet { var value = snippet ?? CommandSnippet(); value.body = center.command; value.parameters = selectedTemplate?.parameters ?? value.parameters; return value }
     private var expanded: String { (try? SnippetParameters.expanded(commandSnippet, values: values, chinese: store.chinese)) ?? center.command }
     private var displayedSelection: Set<UUID> { center.running ? Set(center.results.map(\.hostID)) : selected }
     private var selectedHosts: [Host] { store.workspace.hosts.filter { selected.contains($0.id) } }
@@ -176,25 +223,65 @@ struct BatchTasksView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                targetPanel
-                commandPanel
+                libraryNavigation
                 if !center.error.isEmpty {
                     Label(center.error, systemImage: "exclamationmark.circle.fill").font(.system(size: 12)).foregroundStyle(Palette.danger).textSelection(.enabled)
                 }
+                if library == "task" {
+                targetPanel
+                commandPanel
                 resultsPanel
+                } else {
+                    BatchLibraryView(center: center, mode: library, load: load, edit: { editingTemplate = $0 })
+                }
             }.frame(maxWidth: 1250, alignment: .leading).padding(24).frame(maxWidth: .infinity, alignment: .leading)
         }.background(Palette.background).foregroundStyle(Palette.text).font(.system(size: 12))
+        .sheet(item: $editingTemplate) { template in
+            BatchTemplateEditor(value: template) { saved in
+                if let i = store.workspace.batchTemplates.firstIndex(where: { $0.id == saved.id }) { store.workspace.batchTemplates[i] = saved }
+                else { store.workspace.batchTemplates.insert(saved, at: 0) }
+                store.save(); editingTemplate = nil
+            }.environmentObject(store)
+        }
         .onChange(of: store.workspace.hosts.map(\.id)) { _, ids in selected.formIntersection(ids) }
+        .appAlert(store.text("Retry failed targets?", "重试失败目标？"), isPresented: $confirmingRetry) {
+            AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
+            AppAlertButton(store.text("Run", "执行")) { center.retryFailed() }
+        } message: { Text(center.retryPreview) }
         .appAlert(store.text("Run on selected hosts?", "在所选主机上执行？"), isPresented: $confirming) {
-            Button(store.text("Run", "执行")) {
+            AppAlertButton(store.text("Run", "执行")) {
                 do {
                     let command = try SnippetParameters.expanded(commandSnippet, values: values, chinese: store.chinese)
                     try center.start(hosts: selectedHosts, command: command)
                     selectedResult = nil; resultFilter = "all"
                 } catch { center.error = error.localizedDescription }
             }
-            Button(store.text("Cancel", "取消"), role: .cancel) {}.accessibilityIdentifier("axon-batch-confirm-cancel")
+            AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}.accessibilityIdentifier("axon-batch-confirm-cancel")
         } message: { Text("\(selectedHosts.count) " + store.text("hosts", "台主机") + "\n" + expanded) }
+    }
+    private func load(_ template: BatchTemplate) {
+        guard !center.running else { return }
+        selected = Set(template.hostIDs.filter { id in store.workspace.hosts.contains { $0.id == id } })
+        selectedTemplate = template; snippetID = nil; values = [:]
+        center.command = template.command; center.timeout = template.timeout; center.concurrency = template.concurrency
+        timeoutValid = true; library = "task"; search = ""; group = ""; tag = ""; hostPage = 0
+        let missing = template.hostIDs.count - selected.count
+        center.error = missing > 0 ? store.text("\(missing) saved targets are unavailable. Review the selection before running.", "\(missing) 台保存的目标已不存在，请检查主机选择后再执行。") : ""
+    }
+    private var libraryNavigation: some View {
+        HStack(spacing: 8) {
+            ForEach([("task", store.text("Current task", "当前任务")), ("history", store.text("History", "执行历史")), ("templates", store.text("Templates", "任务模板"))], id: \.0) { item in
+                Button(item.1) { library = item.0 }.buttonStyle(ChromeButtonStyle(prominent: library == item.0))
+                    .accessibilityIdentifier("axon-batch-library-" + item.0)
+            }
+            Spacer()
+            action(store.text("Save template", "保存模板"), id: "save-template", enabled: !center.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !center.running, width: 110) {
+                var value = selectedTemplate ?? BatchTemplate()
+                value.command = center.command; value.hostIDs = selectedHosts.map(\.id); value.concurrency = center.concurrency; value.timeout = center.timeout
+                value.parameters = (try? SnippetParameters.synchronized(commandSnippet.parameters, body: value.command, chinese: store.chinese)) ?? []
+                editingTemplate = value
+            }
+        }
     }
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -234,8 +321,7 @@ struct BatchTasksView: View {
                             if selected.contains(host.id) { selected.remove(host.id) } else { selected.insert(host.id) }
                         } label: {
                             HStack(spacing: 9) {
-                                Image(systemName: displayedSelection.contains(host.id) ? "checkmark.square.fill" : "square")
-                                    .font(.system(size: 16)).foregroundStyle(displayedSelection.contains(host.id) ? Palette.accent : Palette.muted)
+                                AxonSelectionMark(selected: displayedSelection.contains(host.id))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(host.name.isEmpty ? host.address : host.name).font(.system(size: 13, weight: .medium)).lineLimit(2)
                                     Text(RecentTargets.effectiveUsername(host, workspace: store.workspace) + "@" + host.address)
@@ -244,7 +330,7 @@ struct BatchTasksView: View {
                                 Spacer(minLength: 0)
                             }.padding(.horizontal, 12).padding(.vertical, 12).frame(maxWidth: .infinity, alignment: .leading).frame(height: 78)
                                 .background(displayedSelection.contains(host.id) ? Palette.selected : Palette.sidebar).clipShape(RoundedRectangle(cornerRadius: 6)).contentShape(Rectangle())
-                        }.buttonStyle(.plain).disabled(center.running).help(host.name + " · " + host.address)
+                        }.buttonStyle(AxonSurfaceButtonStyle()).disabled(center.running).help(host.name + " · " + host.address)
                             .accessibilityLabel((host.name.isEmpty ? host.address : host.name) + (displayedSelection.contains(host.id) ? store.text(", selected", "，已选") : ""))
                             .accessibilityIdentifier("axon-batch-host-" + host.id.uuidString)
                     }
@@ -290,13 +376,10 @@ struct BatchTasksView: View {
             HStack {
                 Label(store.text("Command", "执行命令"), systemImage: "terminal").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Menu {
-                    Button(store.text("Custom command", "自定义命令")) { snippetID = nil; values = [:] }
-                    ForEach(store.workspace.snippets) { item in
-                        Button(item.name) { snippetID = item.id; center.command = item.body; values = [:] }
+                AxonChoiceField(selection: $snippetID, choices: [(nil, store.text("Custom command", "自定义命令"))] + store.workspace.snippets.map { (Optional($0.id), $0.name) }, placeholder: store.text("Snippets", "代码片段"), symbol: "curlybraces", identifier: "axon-batch-snippet").frame(width: 220).disabled(center.running)
+                    .onChange(of: snippetID) { _, id in
+                        if let item = store.workspace.snippets.first(where: { $0.id == id }) { selectedTemplate = nil; values = [:]; center.command = item.body }
                     }
-                } label: { Text(snippet?.name ?? store.text("Snippets", "代码片段")).lineLimit(1) }
-                .menuStyle(.borderlessButton).fixedSize().frame(maxWidth: 180, alignment: .trailing).disabled(center.running)
             }
             ZStack(alignment: .topLeading) {
                 SnippetTextEditor(text: $center.command).disabled(center.running)
@@ -312,10 +395,10 @@ struct BatchTasksView: View {
             }
             Text(store.text("Non-interactive commands · GNU timeout required on the server", "仅执行非交互命令 · 服务器需有 GNU timeout"))
                 .font(.system(size: 10)).foregroundStyle(Palette.muted)
-            if let snippet, !snippet.parameters.isEmpty {
+            if let parameters = try? SnippetParameters.synchronized(commandSnippet.parameters, body: center.command, chinese: store.chinese), !parameters.isEmpty {
                 DisclosureGroup(store.text("Command parameters", "命令参数")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(snippet.parameters) { parameter in
+                        ForEach(parameters) { parameter in
                             HStack { Text(parameter.name).frame(width: 100, alignment: .leading); TextField(parameter.defaultValue, text: Binding(get: { values[parameter.name] ?? parameter.defaultValue }, set: { values[parameter.name] = $0 })).appInput() }
                         }
                         Text(expanded).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
@@ -328,8 +411,7 @@ struct BatchTasksView: View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
                 Text(store.text("Parallel", "并发数")).foregroundStyle(Palette.muted)
-                Menu { ForEach(1...16, id: \.self) { value in Button(String(value)) { center.concurrency = value } } } label: { Text(String(center.concurrency)).frame(width: 26) }
-                    .menuStyle(.borderlessButton).fixedSize().disabled(center.running)
+                AxonChoiceField(selection: $center.concurrency, choices: (1...16).map { ($0, String($0)) }, placeholder: store.text("Parallel", "并发数"), symbol: "square.stack.3d.up", identifier: "axon-batch-parallel").frame(width: 100).disabled(center.running)
             }
             HStack(spacing: 6) {
                 Text(store.text("Timeout", "超时")).foregroundStyle(Palette.muted)
@@ -349,7 +431,7 @@ struct BatchTasksView: View {
                 Label(store.text("Task results", "任务结果"), systemImage: "list.bullet.rectangle").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 action(store.text("Export", "导出结果"), id: "export", enabled: !center.results.isEmpty, run: { do { try center.export() } catch { center.error = error.localizedDescription } })
-                action(store.text("Retry failed", "重试失败项"), id: "retry", enabled: !center.running && retryable, run: center.retryFailed)
+                action(store.text("Retry failed", "重试失败项"), id: "retry", enabled: !center.running && retryable, run: { confirmingRetry = true })
             }
             HStack(spacing: 8) {
                 resultChip("all", title: store.text("All", "全部"), color: Palette.accent)
@@ -371,7 +453,7 @@ struct BatchTasksView: View {
                             resultColumns(name: result.hostName, status: status(result), duration: duration(result), code: result.exitCode.map(String.init) ?? "—", action: AnyView(Image(systemName: "chevron.right").foregroundStyle(Palette.muted)))
                                 .padding(.horizontal, 10).frame(minHeight: 42)
                                 .background(displayedResult?.id == result.id ? Palette.selected.opacity(0.7) : .clear).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityIdentifier("axon-batch-output-" + result.id.uuidString)
+                        }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityIdentifier("axon-batch-output-" + result.id.uuidString)
                             .accessibilityLabel(result.hostName + " · " + store.text("View output", "查看输出"))
 
                     }
@@ -395,9 +477,9 @@ struct BatchTasksView: View {
                 Text(result.hostName + " · " + store.text("Command output", "命令输出")).font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Spacer()
                 if ["queued", "running"].contains(result.state) {
-                    Button(store.text("Cancel", "取消")) { center.cancel(result.id) }.buttonStyle(.plain)
+                    Button(store.text("Cancel", "取消")) { center.cancel(result.id) }.buttonStyle(ChromeButtonStyle())
                 }
-                Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(result.output + (result.error.isEmpty ? "" : "\n" + result.error), forType: .string) } label: { Label(store.text("Copy", "复制"), systemImage: "doc.on.doc") }.buttonStyle(.plain).accessibilityIdentifier("axon-batch-copy")
+                Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(result.output + (result.error.isEmpty ? "" : "\n" + result.error), forType: .string) } label: { Label(store.text("Copy", "复制"), systemImage: "doc.on.doc") }.buttonStyle(ChromeButtonStyle()).accessibilityIdentifier("axon-batch-copy")
             }.foregroundStyle(Color(hex: store.workspace.preferences.foreground)).padding(.horizontal, 12).padding(.vertical, 10)
             Divider().overlay(Palette.border.opacity(0.15))
             GeometryReader { geometry in
@@ -415,9 +497,9 @@ struct BatchTasksView: View {
         Button { resultFilter = filter } label: {
             HStack(spacing: 5) { Text(title); Text(String(center.results.filter { matches($0, filter: filter) }.count)).monospacedDigit() }
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(color).padding(.horizontal, 10).padding(.vertical, 6)
-                .background(color.opacity(resultFilter == filter ? 0.14 : 0.05)).clipShape(Capsule())
-                .overlay(Capsule().stroke(color.opacity(resultFilter == filter ? 0.4 : 0), lineWidth: 1)).contentShape(Capsule())
-        }.buttonStyle(.plain).accessibilityIdentifier("axon-batch-filter-" + filter)
+                .background(color.opacity(resultFilter == filter ? 0.14 : 0.05)).clipShape(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius))
+                .overlay(RoundedRectangle(cornerRadius: AxonButtonMetrics.radius).stroke(color.opacity(resultFilter == filter ? 0.4 : 0), lineWidth: 1)).contentShape(Rectangle())
+        }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityIdentifier("axon-batch-filter-" + filter)
     }
     private func matches(_ result: BatchResult, filter: String) -> Bool {
         switch filter { case "success": return result.state == "success"; case "failed": return ["failed", "timeout", "cancelled"].contains(result.state); case "active": return ["queued", "running"].contains(result.state); default: return true }

@@ -124,6 +124,27 @@ import XCTest
         XCTAssertEqual(try contentsFingerprint(fixture.app), originalContents)
     }
 
+    func testInstallerRestoresSavedWhiteIconWithoutLaunchingTheApplication() throws {
+        _ = NSApplication.shared
+        let fixture = try makeFixture(); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let fingerprint = try contentsFingerprint(fixture.app)
+        var workspace = Workspace(); workspace.preferences.applicationIcon = "white"
+        try JSONEncoder().encode(workspace).write(to: fixture.workspace)
+        let project = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+        task.arguments = [project.appendingPathComponent("scripts/installed-icon.swift").path, fixture.app.path, fixture.workspace.path]
+        try task.run(); task.waitUntilExit()
+        XCTAssertEqual(task.terminationStatus, 0)
+        XCTAssertTrue(ApplicationIconController.hasCustomIcon(at: fixture.app))
+        XCTAssertEqual(try contentsFingerprint(fixture.app), fingerprint)
+        let image = NSWorkspace.shared.icon(forFile: fixture.app.path)
+        try assertIconStyle(image, white: true)
+        if let path = ProcessInfo.processInfo.environment["AXON_UI_CAPTURE_DIR"] {
+            let directory = URL(fileURLWithPath: path); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try raster(image, size: 128).write(to: directory.appendingPathComponent("icon-white-before-launch.png"))
+        }
+    }
+
     private struct Fixture { let directory: URL; let app: URL; let workspace: URL }
     private func makeFixture() throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("axon-icon-runtime-" + UUID().uuidString)

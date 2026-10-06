@@ -80,8 +80,8 @@ final class ApplicationIconChoiceNativeButton: PreferencesRectNativeButton {
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
-        NSColor(selected || hovering || isHighlighted ? Palette.selected : Palette.field)
+        let path = NSBezierPath(roundedRect: rect, xRadius: AxonButtonMetrics.radius, yRadius: AxonButtonMetrics.radius)
+        NSColor(selected || hovering || isHighlighted ? Palette.selected : Palette.sidebar)
             .withAlphaComponent(isEnabled ? 1 : 0.45).setFill()
         path.fill()
         let imageSize: CGFloat = 64
@@ -90,12 +90,8 @@ final class ApplicationIconChoiceNativeButton: PreferencesRectNativeButton {
         drawText(title, rect: NSRect(x: 8, y: 84, width: max(0, bounds.width - 16), height: 17),
                  color: NSColor(Palette.text).withAlphaComponent(isEnabled ? 1 : 0.45),
                  font: .systemFont(ofSize: 12, weight: selected ? .semibold : .regular), centered: true)
-        if selected {
-            drawText("✓", rect: NSRect(x: bounds.width - 26, y: 9, width: 18, height: 18),
-                     color: NSColor(Palette.accent), font: .systemFont(ofSize: 14, weight: .bold), centered: true)
-        }
-        NSColor(selected ? Palette.accent : Palette.border).setStroke()
-        path.lineWidth = selected ? 2 : 1; path.stroke()
+        AxonSelectionDrawing.mark(in: NSRect(x: 10, y: 10, width: 14, height: 14), selected: selected, enabled: isEnabled)
+        NSColor(Palette.border).setStroke(); path.lineWidth = 1; path.stroke()
         drawFocus()
     }
 }

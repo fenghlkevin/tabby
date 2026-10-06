@@ -210,8 +210,8 @@ struct ExternalEditRow: View {
             }
         }.padding(16).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
         .appAlert(store.text("Upload edited file?", "回传修改后的文件？"), isPresented: $confirming) {
-            Button(store.text("Upload", "回传")) { Task { try? await edit.upload() } }
-            Button(store.text("Cancel", "取消"), role: .cancel) {}
+            AppAlertButton(store.text("Upload", "回传")) { Task { try? await edit.upload() } }
+            AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
         } message: { Text(edit.remotePath + "\n" + store.text("Checks the original contents and keeps a remote backup.", "检查原始内容，并保留远端备份。")) }
     }
 }

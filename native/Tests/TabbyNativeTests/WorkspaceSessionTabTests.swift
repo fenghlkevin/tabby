@@ -28,6 +28,8 @@ final class WorkspaceSessionTabTests: XCTestCase {
         view.mouseDragged(with: try mouse(.leftMouseDragged, in: view, x: 115))
         view.mouseDragged(with: try mouse(.leftMouseDragged, in: view, x: 140))
         view.mouseUp(with: try mouse(.leftMouseUp, in: view, x: 140))
+        XCTAssertFalse(window.isMovable, "Mouse up must not unlock an unfinished native drag")
+        view.finishTabDrag()
         XCTAssertTrue(window.isMovable)
         XCTAssertEqual(window.frame, originalFrame)
         XCTAssertEqual(view.drags.count, 1)
@@ -89,7 +91,7 @@ final class WorkspaceSessionTabTests: XCTestCase {
         XCTAssertEqual(store.activeSession, b.id)
         store.pairSessions(c.id, with: b.id)
         XCTAssertNil(store.splitPartners[a.id])
-        XCTAssertEqual(store.splitPartners[c.id], b.id)
+        XCTAssertEqual(Set(store.paneIDs(containing: b.id)), Set([a.id, b.id, c.id]))
 
         for rejected in [DragInfo(id: b.id, window: window, point: .zero),
                          DragInfo(id: UUID(), window: window, point: .zero),

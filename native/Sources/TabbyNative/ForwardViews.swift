@@ -63,6 +63,7 @@ struct ForwardRuleEditor: View {
     @Environment(\.dismiss) var dismiss
     @State var rule: PortForwardRule
     @State private var error = ""
+    @State private var nameEdited = false
     @State private var bindPortValid = true
     @State private var targetPortValid = true
     var validationMessage: String? {
@@ -71,41 +72,114 @@ struct ForwardRuleEditor: View {
     }
     var valid: Bool { bindPortValid && (rule.isDynamic || targetPortValid) && validationMessage == nil }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            PaneHeading(title: store.text("TCP forwarding rule", "TCP 转发规则"))
-            TextField(store.text("Name", "名称"), text: $rule.name).appInput()
-            Picker(store.text("SSH host", "SSH 主机"), selection: $rule.hostID) { Text(store.text("Select host", "选择主机")).tag(Optional<UUID>.none); ForEach(store.workspace.hosts) { host in Text(host.name).tag(Optional(host.id)) } }
-            Picker(store.text("Type", "类型"), selection: $rule.kind) { Text(store.text("Local → remote", "本地 → 远程")).tag("local"); Text(store.text("Remote → local", "远程 → 本地")).tag("remote"); Text("SOCKS5").tag("dynamic") }.pickerStyle(.segmented)
-            Text(store.text("Listening address / port", "监听地址／端口")).foregroundStyle(Palette.muted)
-            HStack { TextField("127.0.0.1", text: $rule.bindHost).appInput(); PortInput(value: $rule.bindPort, valid: $bindPortValid, placeholder: "8080", label: store.text("Listening port", "监听端口")).frame(width: 120) }
-            if rule.isDynamic {
-                Text(store.text("Configure your application to use this SOCKS5 address with remote DNS. TCP CONNECT only; no authentication. Listening is limited to 127.0.0.1 or ::1.", "在应用中填写此 SOCKS5 地址并开启远程 DNS。支持 TCP CONNECT，无需认证；监听地址限 127.0.0.1 或 ::1。")).font(.caption).foregroundStyle(Palette.muted)
-            } else {
-                Text(store.text("Destination address / port", "目标地址／端口")).foregroundStyle(Palette.muted)
-                HStack { TextField("127.0.0.1", text: $rule.targetHost).appInput(); PortInput(value: $rule.targetPort, valid: $targetPortValid, placeholder: "80", label: store.text("Destination port", "目标端口")).frame(width: 120) }
-                Text(store.text("For local forwarding, the destination is reached from the SSH server. For remote forwarding, it is reached from this Mac.", "本地转发的目标由 SSH 服务器访问；远程转发的目标由此 Mac 访问。 ")).font(.caption).foregroundStyle(Palette.muted)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                IconTile(symbol: "arrow.left.arrow.right", color: Palette.blue, size: 36)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.text("TCP forwarding rule", "TCP 转发规则")).font(.system(size: 16, weight: .semibold))
+                    Text(store.text("Save the rule, then start it when needed", "保存规则后，按需手动启动")).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                }
+                Spacer()
+            }.padding(24).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        fieldLabel(store.text("Name", "名称"), required: true)
+                        TextField(store.text("Rule name", "规则名称"), text: $rule.name).appInput()
+                            .onChange(of: rule.name) { _, _ in nameEdited = true }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        fieldLabel(store.text("SSH host", "SSH 主机"), required: true)
+                        AxonChoiceField(selection: $rule.hostID,
+                            choices: [(Optional<UUID>.none, store.text("Select host", "选择主机"))] + store.workspace.hosts.map { (Optional($0.id), $0.name.isEmpty ? $0.address : $0.name) },
+                            placeholder: store.text("Select host", "选择主机"), symbol: "server.rack", identifier: "axon-forward-host")
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        fieldLabel(store.text("Type", "类型"))
+                        AxonChoiceField(selection: $rule.kind,
+                            choices: [("local", store.text("Local → remote", "本地 → 远程")), ("remote", store.text("Remote → local", "远程 → 本地")), ("dynamic", "SOCKS5")],
+                            placeholder: store.text("Choose type", "选择类型"), symbol: "arrow.left.arrow.right", identifier: "axon-forward-type")
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        fieldLabel(store.text("Listening address / port", "监听地址／端口"), required: true)
+                        HStack(spacing: 12) {
+                            TextField("127.0.0.1", text: $rule.bindHost).appInput()
+                            PortInput(value: $rule.bindPort, valid: $bindPortValid, placeholder: rule.isDynamic ? "1080" : "8080", label: store.text("Listening port", "监听端口")).frame(width: 100)
+                        }
+                    }
+                    if !rule.isDynamic {
+                        VStack(alignment: .leading, spacing: 8) {
+                            fieldLabel(store.text("Destination address / port", "目标地址／端口"), required: true)
+                            HStack(spacing: 12) {
+                                TextField("127.0.0.1", text: $rule.targetHost).appInput()
+                                PortInput(value: $rule.targetPort, valid: $targetPortValid, placeholder: "80", label: store.text("Destination port", "目标端口")).frame(width: 100)
+                            }
+                        }
+                    }
+                    Label(rule.isDynamic
+                        ? store.text("Use this SOCKS5 address with remote DNS. TCP CONNECT; no authentication. Listen on 127.0.0.1 or ::1 only.", "填写此 SOCKS5 地址并开启远程 DNS。支持 TCP CONNECT，无需认证；仅监听 127.0.0.1 或 ::1。")
+                        : (rule.kind == "remote"
+                            ? store.text("The SSH server listens; this Mac connects to the destination.", "SSH 服务器监听端口，由此 Mac 访问目标地址。")
+                            : store.text("This Mac listens; the SSH server connects to the destination.", "此 Mac 监听端口，由 SSH 服务器访问目标地址。")), systemImage: "info.circle")
+                        .font(.system(size: 11)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+                    if !error.isEmpty {
+                        validationLabel(error)
+                    } else if (nameEdited || !rule.name.isEmpty), let validationMessage {
+                        validationLabel(validationMessage)
+                    }
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !error.isEmpty { Text(error).foregroundStyle(.red) }
-            else if let validationMessage { Text(validationMessage).font(.caption).foregroundStyle(.red) }
-            HStack { Button(store.text("Cancel", "取消")) { dismiss() }; Spacer(); Button(store.text("Save", "保存")) { guard valid else { return }; do { try store.saveForward(rule); dismiss() } catch { self.error = error.localizedDescription } }.disabled(!valid).keyboardShortcut(.defaultAction) }.buttonStyle(ChromeButtonStyle())
-        }.padding(24).frame(width: 540).background(Palette.sidebar)
+            Divider()
+            HStack {
+                Button(store.text("Cancel", "取消")) { dismiss() }.buttonStyle(ChromeButtonStyle()).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(store.text("Save", "保存")) {
+                    guard valid else { return }
+                    do { try store.saveForward(rule); dismiss() } catch { self.error = error.localizedDescription }
+                }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(!valid).keyboardShortcut(.defaultAction)
+            }.padding(24).fixedSize(horizontal: false, vertical: true)
+        }.frame(width: 540, height: 620).background(Palette.sidebar).foregroundStyle(Palette.text)
             .onChange(of: rule.kind) { old, new in
                 if new == "dynamic", old != "dynamic", rule.bindPort == 8080 { rule.bindPort = 1080 }
             }
+    }
+    private func fieldLabel(_ title: String, required: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            Text(title).font(.system(size: 12, weight: .medium))
+            if required { Text(store.text("Required", "必填")).font(.system(size: 10)).foregroundStyle(Palette.muted) }
+        }
+    }
+    private func validationLabel(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(Palette.danger)
+            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("axon-forward-validation")
     }
 }
 
 struct LogsView: View {
     @EnvironmentObject var store: AppStore
+    var history: CommandHistoryStore = .shared
+    var body: some View { LogsContentView(logs: store.sessionLogs, history: history) }
+}
+private struct LogsContentView: View {
+    @EnvironmentObject var store: AppStore
+    @ObservedObject var logs: SessionLogStore
+    let history: CommandHistoryStore
     @State private var selected = "operations"
     var body: some View {
         VStack(spacing: 0) {
-            Picker(store.text("Log type", "日志类型"), selection: $selected) {
-                Text(store.text("Operation history", "操作历史")).tag("operations")
-                Text(store.text("Connection events", "连接事件")).tag("connections")
-            }.pickerStyle(.segmented).frame(width: 300).padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Palette.sidebar)
-            if selected == "operations" { OperationHistoryView() } else { ConnectionEventsView() }
-        }
+            HStack(spacing: 8) {
+                ForEach([("operations", store.text("Operation history", "操作历史")), ("transcripts", store.text("Session transcripts", "会话输出")), ("connections", store.text("Connection events", "连接事件"))], id: \.0) { item in
+                    Button(item.1) { selected = item.0 }.buttonStyle(ChromeButtonStyle(prominent: selected == item.0))
+                }
+                Spacer()
+            }.padding(16).background(Palette.sidebar)
+            if selected == "operations" { OperationHistoryView(history: history) }
+            else if selected == "transcripts" { SessionLogsView(logs: logs) }
+            else { ConnectionEventsView() }
+
+        }.onAppear { if logs.selectedID != nil { selected = "transcripts" } }
+            .onChange(of: logs.navigationRequest) { _, _ in selected = "transcripts" }
     }
 }
 
@@ -136,8 +210,8 @@ struct ConnectionEventsView: View {
             }.padding(.horizontal, 22) }
         }
         .appAlert(store.text("Clear all logs?", "清空全部日志？"), isPresented: $confirmingClear) {
-            Button(store.text("Cancel", "取消"), role: .cancel) {}
-            Button(store.text("Clear all logs", "清空全部日志"), role: .destructive) { store.clearActivityLogs() }
+            AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
+            AppAlertButton(store.text("Clear all logs", "清空全部日志"), role: .destructive) { store.clearActivityLogs() }
         } message: {
             Text(store.text("All \(store.workspace.logs.count) saved events will be removed, including those hidden by search. This cannot be undone. New events will continue to appear here.", "将清空全部 \(store.workspace.logs.count) 条记录，包括搜索未显示的记录。此操作无法撤销，之后的新事件仍会继续记录。"))
         }

@@ -24,7 +24,7 @@ struct FilePaneErrorOverlay: ViewModifier {
                     Button { pane.error = nil } label: {
                         Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
                             .frame(width: 24, height: 24).contentShape(Rectangle())
-                    }.buttonStyle(.plain).foregroundStyle(Palette.muted)
+                    }.buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.muted)
                         .help(store.text("Dismiss notification", "关闭提示"))
                         .accessibilityLabel(store.text("Dismiss notification", "关闭提示"))
                         .accessibilityIdentifier("file-error-dismiss")

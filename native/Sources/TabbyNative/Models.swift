@@ -15,6 +15,12 @@ struct Host: Codable, Identifiable, Hashable {
     var auth = "password"
     var keyPath = ""
     var keySource: String?
+    var agentSocketPath: String?
+    var agentFingerprint: String?
+    var certificatePath: String?
+    var certificateAuthorityPath: String?
+    var hostCertificateAuthorityPath: String?
+    var forwardAgent: Bool?
     var credentialID: UUID?
     var jumpHostID: UUID?
     /// Missing on legacy profiles: every setting remains a host override.
@@ -68,6 +74,7 @@ struct Preferences: Codable, Equatable {
     var localLoginShell = true
     var sshConnectTimeout = 30
     var keywordRules: [KeywordRule] = []
+    var shortcuts: [String: ShortcutBinding] = [:]
     var commandHistoryLimit = 1000
     var commandHistoryExclusions = ""
     var commandCompletionNotifications = false
@@ -78,7 +85,7 @@ struct Preferences: Codable, Equatable {
         case ansiColors, customTerminalThemes
         case cursorColor, terminalTheme, cursorShape, cursorBlink, optionAsMeta, backspaceControlH
         case mouseReporting, bellStyle, confirmMultilinePaste, middleClickPaste
-        case keywordRules, commandHistoryLimit, commandHistoryExclusions, commandCompletionNotifications
+        case shortcuts, keywordRules, commandHistoryLimit, commandHistoryExclusions, commandCompletionNotifications
         case localShell, localDirectory, localLoginShell, sshConnectTimeout
     }
     init() {}
@@ -114,6 +121,7 @@ struct Preferences: Codable, Equatable {
         localDirectory = try v.decodeIfPresent(String.self, forKey: .localDirectory) ?? ""
         localLoginShell = try v.decodeIfPresent(Bool.self, forKey: .localLoginShell) ?? true
         keywordRules = try v.decodeIfPresent([KeywordRule].self, forKey: .keywordRules) ?? []
+        shortcuts = try v.decodeIfPresent([String: ShortcutBinding].self, forKey: .shortcuts) ?? [:]
         commandHistoryLimit = try v.decodeIfPresent(Int.self, forKey: .commandHistoryLimit) ?? 1000
         commandHistoryExclusions = try v.decodeIfPresent(String.self, forKey: .commandHistoryExclusions) ?? ""
         commandCompletionNotifications = try v.decodeIfPresent(Bool.self, forKey: .commandCompletionNotifications) ?? false
@@ -132,10 +140,11 @@ struct Workspace: Codable {
     var snippets: [CommandSnippet] = []
     var workScenes: [WorkScene] = []
     var recentTargets: [RecentTarget] = []
+    var batchTemplates: [BatchTemplate] = []
     var preferences = Preferences()
     var bookmarks: [String: [String]] = [:]
     var trustedKeys: [String: String] = [:]
-    enum CodingKeys: String, CodingKey { case hosts, groups, groupDefaults, tags, credentials, forwards, logs, snippets, workScenes, recentTargets, preferences, bookmarks, trustedKeys }
+    enum CodingKeys: String, CodingKey { case hosts, groups, groupDefaults, tags, credentials, forwards, logs, snippets, workScenes, recentTargets, batchTemplates, preferences, bookmarks, trustedKeys }
     init() {}
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -149,6 +158,7 @@ struct Workspace: Codable {
         snippets = try values.decodeIfPresent([CommandSnippet].self, forKey: .snippets) ?? []
         workScenes = try values.decodeIfPresent([WorkScene].self, forKey: .workScenes) ?? []
         recentTargets = try values.decodeIfPresent([RecentTarget].self, forKey: .recentTargets) ?? []
+        batchTemplates = try values.decodeIfPresent([BatchTemplate].self, forKey: .batchTemplates) ?? []
         preferences = try values.decodeIfPresent(Preferences.self, forKey: .preferences) ?? Preferences()
         bookmarks = try values.decodeIfPresent([String: [String]].self, forKey: .bookmarks) ?? [:]
         trustedKeys = try values.decodeIfPresent([String: String].self, forKey: .trustedKeys) ?? [:]
@@ -272,6 +282,7 @@ enum Secrets {
     let monitoring = MonitoringCenter()
     let externalEdits = ExternalEditCenter()
     lazy var batchTasks = BatchTaskCenter(store: self)
+    lazy var sessionLogs = SessionLogStore(root: fileURL.deletingLastPathComponent().appendingPathComponent("SessionLogs"))
     lazy var automaticBackup = AutomaticBackupCoordinator(store: self)
     @Published var workspace = Workspace()
     @Published var section = "hosts"
@@ -279,6 +290,7 @@ enum Secrets {
     @Published var group = ""
     @Published var search = ""
     @Published var launcherRequest = 0
+    @Published var newTabOpen = false
     @Published var recentFileRequest: RecentFileRequest?
     var handledRecentFileRequestID: UUID?
     var deletedHostIDs = Set<UUID>()
@@ -296,6 +308,9 @@ enum Secrets {
     var sceneTaskTokens: [UUID: UUID] = [:]
     var forwardSessionIDs: [UUID: UUID] = [:]
     @Published var splitPartners: [UUID: UUID] = [:]
+    @Published var terminalPaneGroups: [UUID: [UUID]] = [:]
+    @Published var synchronizedTargets = Set<UUID>()
+    @Published var synchronizationEnabled = false
     var sharedWorkspaceCommit: ((Workspace) -> Bool)?
     weak var sceneWindowOwner: AppStore?
     var sceneWindowID: UUID?
@@ -477,13 +492,14 @@ enum Secrets {
         deletedHostIDs.insert(id)
     }
     func connect(_ host: Host? = nil) {
+        if section == "launcher" { newTabOpen = false }
         let session = TerminalSession(host: host, store: self)
         sessions.append(session); activeSession = session.id; section = "terminal"
         if let sceneWindowID, let scene = openScenes.first(where: { $0.id == sceneWindowID }) {
             scene.sessionIDs.append(session.id); scene.selectedSessionID = session.id; scene.mode = "terminal"; showScene(scene)
         }
     }
-    func openLauncher() { launcherRequest += 1; section = "launcher" }
+    func openLauncher() { newTabOpen = true; launcherRequest += 1; section = "launcher" }
     func showMonitoring(_ host: Host? = nil) {
         section = "monitoring"
         if let host { monitoring.select(monitoring.targetID(for: host, workspace: workspace)) }
@@ -512,36 +528,35 @@ enum Secrets {
         section = "sftp"
     }
     var terminalTabs: [TerminalSession] {
-        let standalone = standaloneSessions
-        return standalone.filter { session in
-            guard let peer = splitPartners[session.id], let a = standalone.firstIndex(where: { $0.id == session.id }), let b = standalone.firstIndex(where: { $0.id == peer }) else { return true }
-            return a < b
-        }
+        standaloneSessions.filter { session in paneIDs(containing: session.id).first == session.id }
     }
-    func closeTerminalTab(_ id: UUID) {
-        let peer = splitPartners[id]
-        close(id)
-        if let peer { close(peer) }
-    }
-    func separateSession(_ id: UUID) {
-        if let peer = splitPartners.removeValue(forKey: id) { splitPartners.removeValue(forKey: peer) }
-    }
+    func closeTerminalTab(_ id: UUID) { for key in paneIDs(containing: id) { close(key) } }
+    func separateSession(_ id: UUID) { dissolvePane(id) }
     func pairSessions(_ source: UUID, with target: UUID) {
         guard source != target, sessions.contains(where: { $0.id == source }), sessions.contains(where: { $0.id == target }),
               (sceneWindowID != nil || !openScenes.contains(where: { $0.sessionIDs.contains(source) || $0.sessionIDs.contains(target) })) else { return }
-        for id in [source, target] {
-            if let old = splitPartners.removeValue(forKey: id) { splitPartners.removeValue(forKey: old) }
-        }
-        splitPartners[source] = target; splitPartners[target] = source
-        activeSession = target; section = "terminal"
+        var ids = paneIDs(containing: target)
+        guard !ids.contains(source), ids.count < 4 else { return }
+        dissolvePane(source)
+        if ids.count == 1 { ids = [target] }
+        for key in terminalPaneGroups.keys.filter({ terminalPaneGroups[$0]?.contains(target) == true }) { terminalPaneGroups.removeValue(forKey: key) }
+        splitPartners = splitPartners.filter { !ids.contains($0.key) && !ids.contains($0.value) }
+        ids.append(source); terminalPaneGroups[ids[0]] = ids
+        if ids.count == 2 { splitPartners[ids[0]] = ids[1]; splitPartners[ids[1]] = ids[0] }
+        activeSession = target; section = "terminal"; synchronizationEnabled = false
     }
     func split() {
         guard let id = activeSession, let current = sessions.first(where: { $0.id == id }) else { connect(); return }
-        if let previous = splitPartners.removeValue(forKey: id) { splitPartners.removeValue(forKey: previous) }
+        let ids = paneIDs(containing: id)
+        guard ids.count < 4 else { error = text("A group supports up to four panes", "一个分屏组最多支持四个终端"); return }
         let session = TerminalSession(host: current.host, store: self)
-        sessions.append(session); splitPartners[id] = session.id; splitPartners[session.id] = id
+        sessions.append(session)
+        for key in terminalPaneGroups.keys.filter({ terminalPaneGroups[$0]?.contains(id) == true }) { terminalPaneGroups.removeValue(forKey: key) }
+        splitPartners = splitPartners.filter { !ids.contains($0.key) && !ids.contains($0.value) }
+        terminalPaneGroups[ids.first ?? id] = ids + [session.id]
+        if ids.count == 1 { splitPartners[id] = session.id; splitPartners[session.id] = id }
         if let owner = openScenes.first(where: { $0.sessionIDs.contains(id) }) { owner.sessionIDs.append(session.id) }
-        activeSession = session.id; showTerminalSection()
+        synchronizationEnabled = false; activeSession = session.id; showTerminalSection()
     }
     func moveSession(_ id: UUID, before target: UUID) {
         guard id != target, let from = sessions.firstIndex(where: { $0.id == id }), let targetIndex = sessions.firstIndex(where: { $0.id == target }) else { return }
@@ -574,8 +589,8 @@ enum Secrets {
     func close(_ id: UUID) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         let session = sessions[index]
-        let partner = splitPartners[id]
-        splitPartners = splitPartners.filter { $0.key != id && $0.value != id }
+        let partner = paneIDs(containing: id).first { $0 != id }
+        dissolvePane(id)
         sessions.remove(at: index)
         for scene in openScenes { scene.sessionIDs.removeAll { $0 == id } }
         if activeSession == id || !sessions.contains(where: { $0.id == activeSession }) {

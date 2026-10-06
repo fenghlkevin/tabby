@@ -78,7 +78,7 @@ struct MonitoringVolumeCard: View {
                 Text(disk.mountpoint).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle).help(disk.mountpoint)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button { MonitoringClipboard.copy(disk.mountpoint, to: pasteboard) } label: { Image(systemName: "doc.on.doc").font(.system(size: 11)) }
-                    .buttonStyle(.plain).foregroundStyle(Palette.muted).help(store.text("Copy mount path", "复制挂载路径"))
+                    .buttonStyle(AxonSurfaceButtonStyle()).foregroundStyle(Palette.muted).help(store.text("Copy mount path", "复制挂载路径"))
                     .accessibilityLabel(store.text("Copy mount path: \(disk.mountpoint)", "复制挂载路径：\(disk.mountpoint)"))
             }
             MonitoringMeter(label: store.text("Used", "已使用"), percentage: disk.usedPercent)

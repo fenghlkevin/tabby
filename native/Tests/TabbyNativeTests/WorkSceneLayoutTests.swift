@@ -217,27 +217,52 @@ import XCTest
         let window = show(hosting, size: NSSize(width: 1100, height: 760)); defer { window.close() }
         try await settle(hosting)
         XCTAssertEqual(hosting.bounds.width, 1100, accuracy: 1)
-        for label in ["Save layout", "Terminal", "Logs", "SFTP"] { try assertAccessible(label, in: hosting) }
+        for label in ["Save layout", "Terminal"] { try assertAccessible(label, in: hosting) }
         XCTAssertNotNil(nodes(hosting).first { $0.identifier == "axon-workarea-tab-Application troubleshooting" })
         XCTAssertTrue(first.terminal?.superview != nil, "MainView hosts the cached native terminal")
         try captureAndAudit(hosting, name: "scene-terminal-1100")
-        let modes = try XCTUnwrap(views(NSSegmentedControl.self, in: hosting).first { control in
-            (0..<control.segmentCount).map { control.label(forSegment: $0) ?? "" } == ["Terminal", "SFTP", "Logs"]
-        })
+        let modes = try XCTUnwrap(views(SelectionFieldButton.self, in: hosting).first { $0.accessibilityIdentifier() == "axon-scene-view" })
         XCTAssertEqual(scene.mode, "terminal")
-        XCTAssertEqual(modes.selectedSegment, 0)
-        XCTAssertTrue(modes.isEnabled && modes.isEnabled(forSegment: 2))
-        // The virtual SwiftUI AX child executed its press but returned false.
-        // Dispatch the backing AppKit control's action and verify the binding.
+        XCTAssertTrue(modes.isEnabled)
+        modes.performClick(nil)
+        try await settle(hosting)
+        let menu = try XCTUnwrap(AxonMenuPopover.active)
+        XCTAssertEqual(menu.menu.items.map(\.title), ["Terminal", "SFTP", "Logs"])
         store.activeLogViewer = UUID()
-        modes.selectedSegment = 2
-        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(modes.action), to: modes.target, from: modes))
+        menu.select(2)
         try await settle(hosting)
         XCTAssertEqual(scene.mode, "logs")
         for label in ["Follow", "Latest", "Export loaded", "Errors only"] { try assertAccessible(label, in: hosting) }
         XCTAssertTrue(nodes(hosting).contains { $0.text.contains("sample upstream timeout") })
         XCTAssertEqual(store.activeLogViewer, viewer.id)
         try captureAndAudit(hosting, name: "scene-logs-1100")
+    }
+
+    func testSceneTerminalCardsSeparateConnectionAndPersistenceInBothLanguages() async throws {
+        let fixture = try fixture(); defer { fixture.close() }
+        let restore = enableAccessibility(); defer { restore() }
+        var remote = TabbyNative.Host(); remote.name = "生产服务器-production-with-long-host-name"; remote.address = "production.example.invalid"
+        fixture.store.workspace.hosts = [remote]
+        for language in ["zh-CN", "en-US"] {
+            fixture.store.workspace.preferences.language = language
+            for state in ["local", "ssh", "tmux", "multiple"] {
+                var scene = WorkScene(); scene.name = fixture.store.text("New work scene", "新工作场景")
+                var entry = WorkSceneTerminal(); entry.hostID = state == "local" ? nil : remote.id; entry.directory = "/var/www/app"
+                entry.persistentSession = state == "tmux" || state == "multiple"
+                if entry.persistentSession == true { entry.persistentSessionName = "production" }
+                scene.terminals = [entry]
+                if state == "multiple" { scene.terminals.append(WorkSceneTerminal()) }
+                let hosting = NSHostingView(rootView: WorkSceneEditor(value: scene).environmentObject(fixture.store).preferredColorScheme(.light))
+                let window = show(hosting, size: NSSize(width: 780, height: 640)); defer { window.close() }
+                try await settle(hosting)
+                try assertAccessible(fixture.store.text("Connect to", "连接到"), in: hosting)
+                try assertAccessible(fixture.store.text("Initial directory · optional", "初始目录 · 可选"), in: hosting)
+                try assertAccessible(fixture.store.text("Keep the remote session with tmux", "使用 tmux 保留远程会话"), in: hosting)
+                if state == "tmux" || state == "multiple" { try assertAccessible(fixture.store.text("tmux session name · optional", "tmux 会话名称 · 可选"), in: hosting) }
+                try captureAndAudit(hosting, name: "scene-card-\(state)-\(language)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.store.fileURL.path))
     }
 
     func testSceneEditorSaveFooterStaysReachableWhileLongFormScrolls() async throws {

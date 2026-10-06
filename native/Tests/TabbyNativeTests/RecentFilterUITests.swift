@@ -12,7 +12,7 @@ import SwiftUI
             let store = AppStore(fileURL: root.appendingPathComponent("workspace.json"))
             try await Task.sleep(for: .milliseconds(200))
             store.workspace.preferences.language = "zh-CN"
-            store.workspace.recentTargets = [RecentTarget(kind: .ssh, username: "root", address: "ssh.fixture.invalid", port: 22), RecentTarget(kind: .sftp, username: "root", address: "files.fixture.invalid", port: 22)]
+            store.workspace.recentTargets = [RecentTarget(kind: .ssh, username: "root", address: "ssh.fixture.invalid", port: 22), RecentTarget(kind: .sftp, username: "root", address: "files.fixture.invalid", port: 22), RecentTarget(kind: .localTerminal)]
             let view = NSHostingView(rootView: LauncherView().environmentObject(store).background(Palette.background).preferredColorScheme(.light))
             view.sizingOptions = []
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)

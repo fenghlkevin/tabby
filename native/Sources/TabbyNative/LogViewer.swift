@@ -232,10 +232,10 @@ struct LogViewerWorkspace: View {
                 Text(model.path).font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
                 HStack {
                     TextField(store.text("Filter loaded lines", "筛选已加载日志"), text: $model.filter).appInput()
-                    Toggle(store.text("Errors only", "仅错误"), isOn: $model.onlyErrors).fixedSize()
+                    Toggle(store.text("Errors only", "仅错误"), isOn: $model.onlyErrors).toggleStyle(AxonCheckboxStyle()).fixedSize()
                     TextField(store.text("Find in loaded lines", "搜索已加载日志"), text: $model.search).appInput()
                     Text(model.searchMatches.isEmpty ? "0" : "\(matchIndex % model.searchMatches.count + 1)/\(model.searchMatches.count)").font(.caption).monospacedDigit()
-                    Toggle(store.text("Wrap", "自动换行"), isOn: $wrapLines).toggleStyle(.checkbox).fixedSize()
+                    Toggle(store.text("Wrap", "自动换行"), isOn: $wrapLines).toggleStyle(AxonCheckboxStyle()).fixedSize()
                     Button { matchIndex += 1 } label: { Image(systemName: "chevron.down") }.buttonStyle(IconButtonStyle()).disabled(model.searchMatches.isEmpty)
                 }
             }.padding(14).background(Palette.sidebar)

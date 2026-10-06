@@ -21,7 +21,7 @@ struct FileEditor: View {
                 if loading || saving { ProgressView().controlSize(.small) }
                 Text(store.text("UTF-8 text · 2 MB maximum", "UTF-8 文本 · 最大 2 MB")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button(store.text("Cancel", "取消")) { dismiss() }.disabled(saving)
+                Button(store.text("Cancel", "取消")) { dismiss() }.buttonStyle(ChromeButtonStyle()).disabled(saving)
                 Button(store.text("Save", "保存")) { Task { await save() } }.buttonStyle(ChromeButtonStyle(prominent: true)).disabled(loading || saving || text == original)
             }
         }.padding(20).background(Palette.sidebar).foregroundStyle(Palette.text).frame(width: 820, height: 600).task { await load() }

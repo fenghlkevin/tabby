@@ -58,8 +58,8 @@ struct PersistentSessionControls: View {
                 Button(store.text("End remote session", "结束远端会话"), role: .destructive) { confirming = true }.disabled(!session.connected)
                 if !error.isEmpty { Text(error).foregroundStyle(.red).font(.caption) }
             }.appAlert(store.text("End the tmux session?", "结束 tmux 会话？"), isPresented: $confirming) {
-                Button(store.text("End session", "结束会话"), role: .destructive) { Task { do { try await session.endPersistentSession() } catch { self.error = error.localizedDescription } } }
-                Button(store.text("Cancel", "取消"), role: .cancel) {}
+                AppAlertButton(store.text("End session", "结束会话"), role: .destructive) { Task { do { try await session.endPersistentSession() } catch { self.error = error.localizedDescription } } }
+                AppAlertButton(store.text("Cancel", "取消"), role: .cancel) {}
             } message: { Text(store.text("All programs in this remote tmux session will be terminated.", "此远端 tmux 会话中的全部程序都会被终止。")) }
         }
     }

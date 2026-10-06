@@ -154,6 +154,15 @@ final class PreferencesTests: XCTestCase {
                 let directory = URL(fileURLWithPath: path); try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)); hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
                 try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: directory.appendingPathComponent("preferences-" + page.rawValue + ".png"))
+                if [.terminal, .keyboard, .importHosts, .storage].contains(page), let scroll = find(NSScrollView.self, in: hosting).first, let document = scroll.documentView {
+                    for fraction: CGFloat in [0.5, 1] {
+                        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height) * fraction))
+                        scroll.reflectScrolledClipView(scroll.contentView)
+                        try await Task.sleep(for: .milliseconds(120)); hosting.layoutSubtreeIfNeeded()
+                        let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)); hosting.cacheDisplay(in: hosting.bounds, to: image)
+                        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: directory.appendingPathComponent("preferences-" + page.rawValue + "-scroll-\(fraction).png"))
+                    }
+                }
             }
             window.close()
         }

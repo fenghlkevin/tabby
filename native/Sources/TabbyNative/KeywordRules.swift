@@ -195,11 +195,11 @@ struct KeywordRuleCard: View {
                 VStack(alignment: .leading, spacing: 12) { nameField; patternField }
             }
             HStack(spacing: 18) {
-                Toggle(store.text("Regular expression", "正则表达式"), isOn: $rule.regex)
-                Toggle(store.text("Case sensitive", "区分大小写"), isOn: $rule.caseSensitive)
-                Toggle(store.text("Bold", "加粗文字"), isOn: $rule.bold)
+                Toggle(store.text("Regular expression", "正则表达式"), isOn: $rule.regex).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Case sensitive", "区分大小写"), isOn: $rule.caseSensitive).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Bold", "加粗文字"), isOn: $rule.bold).toggleStyle(AxonCheckboxStyle())
                 Spacer(minLength: 0)
-            }.toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(Palette.muted)
+            }.toggleStyle(AxonCheckboxStyle()).font(.system(size: 11)).foregroundStyle(Palette.muted)
             Divider()
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 22) { appearance; Spacer(minLength: 12); scope }
@@ -227,7 +227,7 @@ struct KeywordRuleCard: View {
         HStack(spacing: 16) {
             color(store.text("Text", "文字"), value: $rule.foreground)
             Toggle(store.text("Background", "背景"), isOn: Binding(get: { !rule.background.isEmpty }, set: { rule.background = $0 ? terminalBackground : "" }))
-                .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                .toggleStyle(AxonCheckboxStyle()).font(.system(size: 11)).foregroundStyle(Palette.muted)
             if !rule.background.isEmpty { color("", value: $rule.background) }
         }.fixedSize()
     }
@@ -236,7 +236,9 @@ struct KeywordRuleCard: View {
             caption(store.text("Scope", "范围"))
             AxonChoiceField(selection: $rule.scope,
                 choices: [("global", store.text("Global", "全局")), ("group", store.text("Group", "分组")), ("host", store.text("Host", "主机"))],
-                placeholder: store.text("Scope", "作用范围"), symbol: "scope", identifier: "keyword-scope-" + rule.id.uuidString).frame(width: 124)
+                placeholder: store.text("Scope", "作用范围"), symbol: "scope", identifier: "keyword-scope-" + rule.id.uuidString,
+                menuTitle: store.text("Apply rule to", "作用范围"),
+                descriptions: [store.text("Global", "全局"): store.text("All terminals", "所有终端会话"), store.text("Group", "分组"): store.text("Hosts in the selected group", "所选分组中的主机"), store.text("Host", "主机"): store.text("Only the selected host", "仅所选主机")]).frame(width: 124)
             if rule.scope == "group" {
                 AxonChoiceField(selection: $rule.group,
                     choices: [("", store.text("Choose group", "选择分组"))] + store.groups.map { ($0, $0) },

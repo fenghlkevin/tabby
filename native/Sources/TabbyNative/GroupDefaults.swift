@@ -66,6 +66,7 @@ enum GroupDefaults {
     static func connectionSource(_ original: Host, workspace: Workspace) -> Host {
         guard let current = workspace.hosts.first(where: { $0.id == original.id }) else { return original }
         var host = original
+        host.hostCertificateAuthorityPath = current.hostCertificateAuthorityPath; host.certificatePath = current.certificatePath; host.certificateAuthorityPath = current.certificateAuthorityPath; host.forwardAgent = current.forwardAgent; host.agentSocketPath = current.agentSocketPath; host.agentFingerprint = current.agentFingerprint
         host.username = current.username; host.auth = current.auth
         host.keySource = current.keySource; host.keyPath = current.keyPath
         host.credentialID = current.credentialID; host.group = current.group

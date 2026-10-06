@@ -37,6 +37,7 @@ struct PreferencesView: View {
     @State private var fontSizeValid = true
     @State private var fontSizeInput = "19"
     @State private var timeoutValid = true
+    @State private var historyValid = true
     @State private var error = ""
     @State private var saved = false
     @State private var loaded = false
@@ -45,8 +46,8 @@ struct PreferencesView: View {
     init(page: PreferencesPage = .general, selection: Binding<PreferencesPage>? = nil, showsSidebar: Bool = true) {
         _localPage = State(initialValue: page); self.selection = selection; self.showsSidebar = showsSidebar
     }
-    private var dirty: Bool { draft != store.workspace.preferences || !scrollbackValid || !fontSizeValid || !timeoutValid }
-    private var validNumbers: Bool { scrollbackValid && fontSizeValid && timeoutValid }
+    private var dirty: Bool { draft != store.workspace.preferences || !scrollbackValid || !fontSizeValid || !timeoutValid || !historyValid }
+    private var validNumbers: Bool { scrollbackValid && fontSizeValid && timeoutValid && historyValid }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -71,10 +72,13 @@ struct PreferencesView: View {
                 else { Text(saved && !dirty ? store.text("Settings saved", "设置已保存") : dirty ? store.text("Unsaved changes", "有未保存的更改") : store.text("Changes apply after saving", "保存后生效")).font(.system(size: 11)).foregroundStyle(Palette.muted) }
                 Spacer(minLength: 8)
                 Button(store.text("Revert", "撤销更改"), action: reload).buttonStyle(ChromeButtonStyle()).disabled(!dirty).accessibilityIdentifier("axon-preferences-revert")
-                Button(store.text("Save", "保存"), action: save).buttonStyle(ChromeButtonStyle(prominent: true)).disabled(!dirty || !validNumbers).keyboardShortcut(.return, modifiers: .command).accessibilityIdentifier("axon-preferences-save")
+                Button(store.text("Save", "保存"), action: save).buttonStyle(ChromeButtonStyle(prominent: true)).disabled(!dirty || !validNumbers || ShortcutBinding.validationIssue(draft, chinese: store.chinese) != nil).keyboardShortcut(store.workspace.preferences.shortcut(.saveSettings).keyEquivalent, modifiers: store.workspace.preferences.shortcut(.saveSettings).modifiers).accessibilityIdentifier("axon-preferences-save")
             }.padding(.horizontal, 20).padding(.vertical, 14).background(Palette.sidebar)
         }.foregroundStyle(Palette.text).font(.system(size: 13)).frame(minWidth: 650, minHeight: 520)
             .onAppear { if !loaded { reload(); loaded = true } }
+            .onReceive(NotificationCenter.default.publisher(for: .axonSaveSettingsShortcut)) { notification in
+                if notification.object as? AppStore === store, dirty, validNumbers, ShortcutBinding.validationIssue(draft, chinese: store.chinese) == nil { save() }
+            }
             .onChange(of: draft) { _, _ in saved = false; error = "" }
             .onChange(of: store.workspace.preferences) { _, value in
                 if colorCommitSnapshot == value { colorCommitSnapshot = nil }
@@ -122,7 +126,7 @@ struct PreferencesView: View {
     private var general: some View {
         VStack(alignment: .leading, spacing: 18) {
             section(store.text("Application", "应用")) {
-                row(store.text("Language", "语言")) { Picker("", selection: $draft.language) { Text(store.text("Automatic", "自动")).tag("auto"); Text("简体中文").tag("zh-CN"); Text("English").tag("en-US") }.labelsHidden() }
+                row(store.text("Language", "语言")) { AxonChoiceField(selection: $draft.language, choices: [("auto", store.text("Automatic", "自动")), ("zh-CN", "简体中文"), ("en-US", "English")], placeholder: store.text("Language", "语言"), symbol: "globe", identifier: "axon-language") }
                 Text(store.text("Application icon", "程序图标")).foregroundStyle(Palette.muted)
                 ApplicationIconPicker(selection: $draft.applicationIcon, chinese: store.chinese)
                 note(store.text("Both icons keep the yellow node. Save to apply the selected application icon and logo.", "两款均保留黄色节点；保存后应用于程序图标与应用 Logo。"))
@@ -130,7 +134,7 @@ struct PreferencesView: View {
             section(store.text("Local terminal", "本地终端")) {
                 pathField(store.text("Shell executable", "Shell 程序"), text: $draft.localShell, placeholder: store.text("System default", "使用系统默认"), directory: false)
                 pathField(store.text("Starting directory", "启动目录"), text: $draft.localDirectory, placeholder: "~", directory: true)
-                Toggle(store.text("Run as a login shell", "作为登录 Shell 启动"), isOn: $draft.localLoginShell)
+                Toggle(store.text("Run as a login shell", "作为登录 Shell 启动"), isOn: $draft.localLoginShell).toggleStyle(AxonCheckboxStyle())
                 note(store.text("Empty paths use your system shell and home directory. Applies to newly opened local terminals.", "路径留空时使用系统 Shell 与用户主目录；应用于新建本地终端。"))
             }
         }
@@ -138,25 +142,33 @@ struct PreferencesView: View {
     private var terminal: some View {
         VStack(alignment: .leading, spacing: 16) {
         TerminalPreferencesPane(draft: $draft, scrollbackValid: $scrollbackValid, fontSizeValid: $fontSizeValid, chinese: store.chinese, fontSizeInput: $fontSizeInput)
-        Stepper(store.text("History entries: \(draft.commandHistoryLimit)", "历史保留数：\(draft.commandHistoryLimit)"), value: $draft.commandHistoryLimit, in: 100...50000, step: 100)
-        Toggle(store.text("Notify when commands finish after 10 seconds", "命令运行超过 10 秒，完成后通知"), isOn: $draft.commandCompletionNotifications)
-        TextField(store.text("Exclude commands containing these terms (one per line)", "排除包含以下内容的命令（每行一项）"), text: $draft.commandHistoryExclusions, axis: .vertical).appInput()
+        section(store.text("Command history", "命令历史")) {
+            row(store.text("Entries to keep", "历史保留数")) {
+                IntegerInput(value: $draft.commandHistoryLimit, valid: $historyValid, range: 100...50000, placeholder: "1000", label: store.text("Command history entries", "命令历史保留数")).frame(width: 160)
+            }
+            note(store.text("Keep 100–50,000 recent commands. Older entries are removed when the limit is reached.", "保留 100–50,000 条最近命令，超出数量时移除最早的记录。"))
+            Toggle(store.text("Notify when commands finish after 10 seconds", "命令运行超过 10 秒，完成后通知"), isOn: $draft.commandCompletionNotifications).toggleStyle(AxonCheckboxStyle())
+            VStack(alignment: .leading, spacing: 8) {
+                Text(store.text("Exclude commands containing", "不记录包含以下内容的命令")).foregroundStyle(Palette.muted)
+                TextField(store.text("One term per line", "每行填写一项"), text: $draft.commandHistoryExclusions, axis: .vertical).appInput()
+            }
+        }
         }
     }
     private var keyboard: some View {
         VStack(alignment: .leading, spacing: 18) {
             section(store.text("Keyboard & mouse", "键盘与鼠标")) {
-                Toggle(store.text("Use Option as Meta", "将 Option 用作 Meta"), isOn: $draft.optionAsMeta)
-                Toggle(store.text("Backspace sends Control-H", "退格键发送 Control-H"), isOn: $draft.backspaceControlH)
-                Toggle(store.text("Allow mouse reporting to terminal apps", "允许终端程序处理鼠标事件"), isOn: $draft.mouseReporting)
-                row(store.text("Terminal bell", "终端铃声")) { Picker("", selection: $draft.bellStyle) { Text(store.text("Off", "关闭")).tag("none"); Text(store.text("Sound", "声音")).tag("sound"); Text(store.text("Flash", "闪烁")).tag("visual"); Text(store.text("Sound & flash", "声音与闪烁")).tag("soundAndVisual") }.labelsHidden() }
+                Toggle(store.text("Use Option as Meta", "将 Option 用作 Meta"), isOn: $draft.optionAsMeta).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Backspace sends Control-H", "退格键发送 Control-H"), isOn: $draft.backspaceControlH).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Allow mouse reporting to terminal apps", "允许终端程序处理鼠标事件"), isOn: $draft.mouseReporting).toggleStyle(AxonCheckboxStyle())
+                row(store.text("Terminal bell", "终端铃声")) { AxonChoiceField(selection: $draft.bellStyle, choices: [("none", store.text("Off", "关闭")), ("sound", store.text("Sound", "声音")), ("visual", store.text("Flash", "闪烁")), ("soundAndVisual", store.text("Sound & flash", "声音与闪烁"))], placeholder: store.text("Terminal bell", "终端铃声"), symbol: "bell", identifier: "axon-bell") }
             }
             section(store.text("Clipboard", "剪贴板")) {
-                Toggle(store.text("Copy on selection", "选中即复制"), isOn: $draft.copyOnSelect)
-                Toggle(store.text("Right click to paste", "右键粘贴"), isOn: $draft.rightClickPaste)
-                Toggle(store.text("Middle click to paste", "中键粘贴"), isOn: $draft.middleClickPaste)
-                Toggle(store.text("Trim pasted whitespace", "去除粘贴首尾空白"), isOn: $draft.trimPaste)
-                Toggle(store.text("Confirm multiline paste", "粘贴多行内容前确认"), isOn: $draft.confirmMultilinePaste)
+                Toggle(store.text("Copy on selection", "选中即复制"), isOn: $draft.copyOnSelect).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Right click to paste", "右键粘贴"), isOn: $draft.rightClickPaste).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Middle click to paste", "中键粘贴"), isOn: $draft.middleClickPaste).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Trim pasted whitespace", "去除粘贴首尾空白"), isOn: $draft.trimPaste).toggleStyle(AxonCheckboxStyle())
+                Toggle(store.text("Confirm multiline paste", "粘贴多行内容前确认"), isOn: $draft.confirmMultilinePaste).toggleStyle(AxonCheckboxStyle())
                 note(store.text("Applies to open terminals after saving. Multiline confirmation shows a preview before sending text.", "保存后应用到已打开终端；多行粘贴会在发送前展示内容预览。"))
             }
         }
@@ -171,21 +183,26 @@ struct PreferencesView: View {
     private var about: some View {
         VStack(alignment: .leading, spacing: 18) {
             section("Axon") {
-                HStack(spacing: 14) { Image(nsImage: ApplicationIconAppearance.image(for: store.workspace.preferences.applicationIcon) ?? NSApp.applicationIconImage).resizable().frame(width: 44, height: 44).accessibilityLabel(store.text("Axon application icon", "Axon 程序图标")); VStack(alignment: .leading, spacing: 5) { Text("Axon " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")).font(.system(size: 16, weight: .semibold)); Text("macOS · SwiftUI · SwiftTerm · Citadel").font(.system(size: 11)).foregroundStyle(Palette.muted) } }
+                HStack(spacing: 14) { Image(nsImage: ApplicationIconAppearance.image(for: store.workspace.preferences.applicationIcon) ?? NSApp.applicationIconImage).resizable().frame(width: 44, height: 44).accessibilityLabel(store.text("Axon application icon", "Axon 程序图标")); VStack(alignment: .leading, spacing: 5) { Text("Axon " + (Bundle.main.bundleIdentifier == "org.tabby.native" ? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development" : "Development")).font(.system(size: 16, weight: .semibold)); Text(store.text("SSH terminal and SFTP workspace for macOS", "macOS SSH 终端与 SFTP 工作区")).font(.system(size: 11)).foregroundStyle(Palette.muted) } }
+                Divider()
+                row(store.text("Author", "作者")) { Text("fenghlkevin").frame(maxWidth: .infinity, alignment: .leading) }
+                note(store.text("Built with SwiftUI for the interface, SwiftTerm for terminal rendering and Citadel for SSH connections.", "界面使用 SwiftUI，终端显示由 SwiftTerm 提供，SSH 连接由 Citadel 提供。"))
             }
         }
     }
     private var shortcuts: some View {
-            section(store.text("Keyboard shortcuts", "快捷键")) {
-                shortcut(store.text("New tab", "新标签"), "⌘ T")
-                shortcut(store.text("Search hosts or tabs", "搜索主机或标签"), "⌘ K")
-                shortcut(store.text("Local terminal", "本地终端"), "⇧ ⌘ T")
-                shortcut(store.text("Split terminal", "终端分屏"), "⌘ D")
-                shortcut(store.text("Find in terminal", "搜索终端"), "⌘ F")
-                shortcut(store.text("Close session", "关闭会话"), "⇧ ⌘ W")
-                shortcut(store.text("Settings", "设置"), "⌘ ,")
-                shortcut(store.text("Save settings", "保存设置"), "⌘ ↩")
+        section(store.text("Keyboard shortcuts", "快捷键")) {
+            note(store.text("Click a shortcut, then press a combination containing Command. Escape cancels recording. Save to apply.", "点击快捷键按钮后，按下包含 Command 的组合键；Escape 取消录入，保存后生效。"))
+            ForEach(ShortcutAction.allCases) { action in
+                HStack(spacing: 16) {
+                    Text(action.title(chinese: store.chinese))
+                    Spacer(minLength: 8)
+                    ShortcutRecorder(value: Binding(get: { draft.shortcut(action) }, set: { draft.shortcuts[action.rawValue] = $0 }), chinese: store.chinese, identifier: "axon-shortcut-" + action.rawValue).frame(width: 156, height: 38)
+                }
             }
+            if let issue = ShortcutBinding.validationIssue(draft, chinese: store.chinese) { Text(issue).font(.system(size: 11)).foregroundStyle(Palette.danger) }
+            Button(store.text("Restore default shortcuts", "恢复默认快捷键")) { draft.shortcuts = [:] }.buttonStyle(ChromeButtonStyle()).disabled(draft.shortcuts.isEmpty)
+        }
     }
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View { VStack(alignment: .leading, spacing: 16) { Text(title).font(.system(size: 14, weight: .semibold)); content() }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12)) }
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View { HStack(alignment: .center, spacing: 14) { Text(title).foregroundStyle(Palette.muted).frame(width: 112, alignment: .leading); content().frame(maxWidth: .infinity, alignment: .trailing) } }
@@ -207,7 +224,7 @@ struct PreferencesView: View {
             }
         }
     }
-    private func reload() { draft = store.workspace.preferences; fontSizeInput = TerminalFontSizeNativeEditor.display(draft.fontSize); scrollbackValid = true; fontSizeValid = true; timeoutValid = true; error = ""; saved = false; draftRevision += 1 }
+    private func reload() { draft = store.workspace.preferences; fontSizeInput = TerminalFontSizeNativeEditor.display(draft.fontSize); scrollbackValid = true; fontSizeValid = true; timeoutValid = true; historyValid = true; error = ""; saved = false; draftRevision += 1 }
     private func saveTerminalColors(_ value: Preferences) throws {
         try store.commitTerminalColors(value)
         colorCommitSnapshot = store.workspace.preferences

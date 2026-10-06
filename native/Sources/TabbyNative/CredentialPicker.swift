@@ -89,12 +89,14 @@ final class CredentialPickerButton: NSButton {
         menu.autoenablesItems = false
         menu.minimumWidth = bounds.width
         let independent = NSMenuItem(title: independentTitle ?? text("Set up for this host", "仅用于此主机"), action: #selector(selectIndependent), keyEquivalent: "")
+        independent.image = NSImage(systemSymbolName: "person", accessibilityDescription: nil)
         independent.target = self
         independent.state = selectedID == nil ? .on : .off
         independent.isEnabled = isEnabled
         menu.addItem(independent)
         for credential in credentials {
             let item = NSMenuItem(title: credential.name + " · " + credential.username, action: #selector(selectShared(_:)), keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: "key", accessibilityDescription: nil)
             item.target = self
             item.representedObject = credential.id
             item.state = selectedID == credential.id ? .on : .off
@@ -113,7 +115,7 @@ final class CredentialPickerButton: NSButton {
     @objc private func openMenu() {
         guard isEnabled else { return }
         window?.makeFirstResponder(self)
-        makeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 3), in: self)
+        AxonMenuPopover.show(makeMenu(), from: self)
     }
     @objc private func selectIndependent() { choose(nil) }
     @objc private func selectShared(_ item: NSMenuItem) {

@@ -6,6 +6,62 @@ import XCTest
 @testable import TabbyNative
 
 final class MainWindowLifecycleTests: XCTestCase {
+    @MainActor func testFullscreenCloseWaitsForExitAndReopenCancelsPendingHide() throws {
+        _ = NSApplication.shared
+        let controller = MainWindowLifecycleController()
+        let window = ControlledFullscreenWindow(contentRect: NSRect(x: 100, y: 100, width: 1050, height: 680), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.orderFront(nil); controller.attach(to: window)
+        defer { window.delegate = nil; window.simulatedFullscreen = false; window.close() }
+        window.simulatedFullscreen = true
+        XCTAssertFalse(controller.windowShouldClose(window))
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(window.toggleCalls, 1)
+        XCTAssertFalse(controller.windowShouldClose(window))
+        XCTAssertEqual(window.toggleCalls, 1)
+        controller.windowWillExitFullScreen(Notification(name: NSWindow.willExitFullScreenNotification, object: window))
+        window.simulatedFullscreen = false
+        controller.windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification, object: window))
+        XCTAssertFalse(window.isVisible)
+        XCTAssertTrue(controller.reopen(using: NSApp)); XCTAssertTrue(window.isVisible)
+        window.simulatedFullscreen = true
+        XCTAssertFalse(controller.windowShouldClose(window))
+        XCTAssertTrue(controller.reopen(using: NSApp))
+        window.simulatedFullscreen = false
+        controller.windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification, object: window))
+        XCTAssertTrue(window.isVisible)
+    }
+
+    @MainActor func testRealFullscreenCloseAndReopen() throws {
+        guard ProcessInfo.processInfo.environment["AXON_TEST_REAL_FULLSCREEN"] == "1" else { throw XCTSkip("Real fullscreen transition is opt-in") }
+        let application = NSApplication.shared
+        application.setActivationPolicy(.regular)
+        let store = AppStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        store.workspace.preferences.language = "zh-CN"
+        let controller = MainWindowLifecycleController()
+        let hosting = NSHostingView(rootView: MainView().environmentObject(store).preferredColorScheme(.light))
+        let window = show(hosting)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        controller.attach(to: window)
+        defer { window.delegate = nil; window.close() }
+        application.activate(ignoringOtherApps: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        window.toggleFullScreen(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
+        guard window.styleMask.contains(.fullScreen) else { throw XCTSkip("XCTest host could not enter a native fullscreen Space; use standalone AppKit probe") }
+        window.performClose(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(3))
+        XCTAssertFalse(window.styleMask.contains(.fullScreen))
+        XCTAssertFalse(window.isVisible)
+        XCTAssertTrue(controller.reopen(using: application))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertTrue(window.isVisible)
+        XCTAssertTrue(window.contentView === hosting)
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/private/tmp/axon-fullscreen-close-reopen.png"))
+    }
+
     @MainActor func testWorkspaceCloseHidesAndDockReopenKeepsWindowViewDraftAndLiveShell() async throws {
         let application = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("axon-main-window-test-" + UUID().uuidString)
@@ -14,7 +70,7 @@ final class MainWindowLifecycleTests: XCTestCase {
         store.workspace.preferences.localLoginShell = false
         store.connect()
         let session = try XCTUnwrap(store.sessions.first)
-        let terminal = try XCTUnwrap(session.makeView() as? LocalProcessTerminalView)
+        let terminal = try XCTUnwrap(session.makeView() as? LocalTerminal)
         let delegate = ApplicationDelegate(); delegate.store = store
         let appearances = ViewAppearances()
         let hosting = NSHostingView(rootView: WindowDraftFixture(controller: delegate.mainWindowController, appearances: appearances))
@@ -129,7 +185,7 @@ final class MainWindowLifecycleTests: XCTestCase {
         store.workspace.preferences.localLoginShell = false
         store.connect()
         let session = try XCTUnwrap(store.sessions.first)
-        let terminal = try XCTUnwrap(session.makeView() as? LocalProcessTerminalView)
+        let terminal = try XCTUnwrap(session.makeView() as? LocalTerminal)
         let forwarding = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
         let forwardingID = UUID(); store.forwardTasks[forwardingID] = forwarding
         let delegate = ApplicationDelegate(); delegate.store = store
@@ -218,4 +274,14 @@ private final class ControlledMiniaturizedWindow: NSWindow {
         deminiaturizeCalls += 1
         simulatedMiniaturized = false
     }
+}
+
+private final class ControlledFullscreenWindow: NSWindow {
+    var toggleCalls = 0
+    var simulatedFullscreen = false
+    override var styleMask: NSWindow.StyleMask {
+        get { simulatedFullscreen ? super.styleMask.union(.fullScreen) : super.styleMask }
+        set { super.styleMask = newValue }
+    }
+    override func toggleFullScreen(_ sender: Any?) { toggleCalls += 1 }
 }

@@ -134,7 +134,7 @@ struct MonitoringHostCard: View {
                     }.frame(height: 52)
                     metrics.frame(height: 62, alignment: .center)
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel(store.text("Monitoring details for \(entry.label)", "\(entry.label) 的监控详情"))
+            }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel(store.text("Monitoring details for \(entry.label)", "\(entry.label) 的监控详情"))
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.group.isEmpty ? "SSH" : entry.group).lineLimit(1)
@@ -197,7 +197,7 @@ struct MonitoringHostRow: View {
                     }
                     Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Palette.muted)
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel(store.text("Monitoring details for \(entry.label)", "\(entry.label) 的监控详情"))
+            }.buttonStyle(AxonSurfaceButtonStyle()).accessibilityLabel(store.text("Monitoring details for \(entry.label)", "\(entry.label) 的监控详情"))
             MonitoringTerminalButton(entry: entry, chinese: store.chinese, action: connect).frame(width: MonitoringTerminalNativeButton.width, height: MonitoringTerminalNativeButton.height).disabled(!canConnect)
         }.padding(.horizontal, 16).frame(height: 76).foregroundStyle(Palette.text).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 12))
     }

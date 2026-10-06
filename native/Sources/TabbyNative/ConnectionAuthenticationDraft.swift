@@ -98,7 +98,7 @@ struct ConnectionAuthenticationResult {
 
     func authentication(chinese: Bool) throws -> SSHAuthenticationMethod {
         if host.auth == "key" {
-            return try PrivateKeys.authentication(privateKey, passphrase: secret, username: host.username, chinese: chinese)
+            return try PrivateKeys.authentication(privateKey, passphrase: secret, username: host.username, chinese: chinese, certificatePath: host.certificatePath, authorityPath: host.certificateAuthorityPath)
         }
         guard !secret.isEmpty else { throw AppFailure.message(chinese ? "请输入密码" : "Enter a password") }
         return .passwordBased(username: host.username, password: secret)
