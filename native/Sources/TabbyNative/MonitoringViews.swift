@@ -359,7 +359,7 @@ private struct MonitoringProcessDetail: View {
                 Text(store.text("Arguments (redacted)", "参数（已脱敏）")).font(.system(size: 12, weight: .medium))
                 ScrollView { Text(arguments).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(12) }.frame(maxHeight: 180).background(Palette.field).clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            HStack { Text(store.text("Read-only snapshot", "只读采样")).font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); Button(store.text("Close", "关闭")) { dismiss() }.buttonStyle(ChromeButtonStyle()).keyboardShortcut(.cancelAction) }
+            HStack { Text(store.text("Read-only snapshot", "只读采样")).font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); DismissIconButton(title: store.text("Close", "关闭")) { dismiss() }.keyboardShortcut(.cancelAction) }
         }.padding(24).frame(width: 520).background(Palette.sidebar).foregroundStyle(Palette.text)
     }
 }

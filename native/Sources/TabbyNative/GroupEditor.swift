@@ -30,7 +30,7 @@ struct GroupEditor: View {
             HStack {
                 Text(isNew ? store.text("New group", "新建分组") : store.text("Group details", "分组详情")).font(.system(size: 15, weight: .medium))
                 Spacer()
-                Button(action: done) { Image(systemName: "xmark") }.buttonStyle(IconButtonStyle()).help(store.text("Close details", "关闭详情"))
+                DismissIconButton(title: store.text("Close details", "关闭详情"), action: done)
             }.padding(.horizontal, 18).frame(height: 52)
             Rectangle().fill(Palette.border).frame(height: 1)
             ScrollView {

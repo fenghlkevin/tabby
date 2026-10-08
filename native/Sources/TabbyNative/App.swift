@@ -193,8 +193,9 @@ struct MainView: View {
     @State private var inspectorHost: Host?
     @State private var inspectorGroup: HostGroup?
     @State private var selectedHost: UUID?
+    @AppStorage("axon.terminalToolsWidth") private var terminalToolsWidth = 320.0
     @State private var terminalToolsVisible = false
-    @State private var terminalTool = "theme"
+    @State private var terminalTool = "ai"
     @State private var monitoringForeground = false
     @State private var newTabHovering = false
     @State private var lastVaultSection = "hosts"
@@ -224,8 +225,13 @@ struct MainView: View {
         .onAppear { returnToHostsIfNeeded(); updateMonitoring() }
         .onDisappear { store.monitoring.stop() }
         .onChange(of: monitoringForeground) { _, _ in updateMonitoring() }
-        .onChange(of: terminalToolsVisible) { _, _ in updateMonitoring() }
-        .onChange(of: terminalTool) { _, _ in updateMonitoring() }
+        .onChange(of: terminalToolsVisible) { _, visible in
+            if visible, terminalTool == "ai", store.ai.context.sessionID != store.activeSession { store.prepareTerminalAI() }
+            updateMonitoring()
+        }
+        .onChange(of: terminalTool) { _, value in if value == "ai", store.ai.context.sessionID != store.activeSession { store.prepareTerminalAI() }; updateMonitoring() }
+        .onChange(of: store.aiTerminalRequest) { _, _ in terminalTool = "ai"; terminalToolsVisible = true }
+        .sheet(isPresented: $store.aiAnalysisPresented) { AIAnalysisSheet().environmentObject(store) }
         .onChange(of: store.currentScene?.mode) { _, _ in updateMonitoring() }
         .onChange(of: store.activeSession) { _, id in if let scene = store.openScenes.first(where: { $0.sessionIDs.contains(id ?? UUID()) }) { scene.selectedSessionID = id }; updateMonitoring() }
         .onChange(of: store.sessions.map(\.id)) { _, _ in returnToHostsIfNeeded() }
@@ -245,7 +251,7 @@ struct MainView: View {
     }
     private func workspaceContent(width: CGFloat, height: CGFloat) -> some View {
         let navigationWidth: CGFloat = vaultSelected ? 185 : 0
-        let toolsWidth: CGFloat = terminalVisible && terminalToolsVisible ? TerminalToolsPanel.width : 0
+        let toolsWidth: CGFloat = terminalVisible && terminalToolsVisible ? TerminalToolsPanel.allocatedWidth(selection: terminalTool, workspace: width - navigationWidth, preferred: terminalToolsWidth) : 0
         let inspectorWidth: CGFloat = store.section == "hosts" && (inspectorHost != nil || inspectorGroup != nil) ? 341 : 0
         let centerWidth = max(0, width - navigationWidth - toolsWidth - inspectorWidth)
         return HStack(spacing: 0) {
@@ -282,7 +288,10 @@ struct MainView: View {
                 // Keep the drawer at its full width while the surrounding slot
                 // slides in and out. Only the workspace allocation animates;
                 // the window and the live terminal retain their identities.
-                TerminalToolsPanel(selection: $terminalTool, isVisible: $terminalToolsVisible, availableHeight: height)
+                TerminalToolsPanel(selection: $terminalTool, isVisible: $terminalToolsVisible, availableHeight: height, panelWidth: toolsWidth == 0 ? TerminalToolsPanel.allocatedWidth(selection: terminalTool, workspace: width - navigationWidth, preferred: terminalToolsWidth) : toolsWidth)
+                    .overlay(alignment: .leading) {
+                        TerminalToolsResizeHandle(width: toolsWidth, label: store.text("Drag to resize terminal tools", "拖动调整终端工具宽度")) { value in terminalToolsWidth = Double(TerminalToolsPanel.allocatedWidth(selection: terminalTool, workspace: width - navigationWidth, preferred: value)) }.frame(width: 8)
+                    }
                     .frame(width: toolsWidth, height: height, alignment: .leading)
                     .clipped()
                     .allowsHitTesting(terminalToolsVisible)
@@ -644,12 +653,12 @@ struct HostEditor: View {
     private var inheritsAuthentication: Bool { groupDefaults != nil && host.groupInheritance?.authentication == true }
     private var credentialLoadID: String { "\(host.id)-\(host.credentialID?.uuidString ?? "independent")-\(inheritsAuthentication)-\(credentialLoadAttempt)" }
     private var formValidationError: String? {
-        do { _ = try ConnectionValidation.host(effectiveHost, workspace: store.workspace, chinese: store.chinese); return nil }
+        do { _ = try ConnectionValidation.host(effectiveHost, workspace: store.workspace, chinese: store.chinese); try AIExecutionPolicy().mergingCommandLists(host).validate(); return nil }
         catch { return error.localizedDescription }
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack { Text(isNew ? store.text("New host", "新建主机") : store.text("Host details", "主机详情")).font(.system(size: 15, weight: .medium)); Spacer(); Button(action: done) { Image(systemName: "xmark") }.buttonStyle(IconButtonStyle()).help(store.text("Close details", "关闭详情")) }.padding(.horizontal, 18).frame(height: 52)
+            HStack { Text(isNew ? store.text("New host", "新建主机") : store.text("Host details", "主机详情")).font(.system(size: 15, weight: .medium)); Spacer(); DismissIconButton(title: store.text("Close details", "关闭详情"), action: done) }.padding(.horizontal, 18).frame(height: 52)
             Rectangle().fill(Palette.border).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -737,6 +746,7 @@ struct HostEditor: View {
                     sectionTitle(store.text("ADVANCED", "高级"))
                     SSHCompatibilityFields(host: $host)
                     SSHDiagnosticsControl(host: effectiveHost)
+                    DisclosureGroup(store.text("AI command permissions", "AI 命令权限")) { AIHostCommandRules(host: $host).padding(.top, 8) }.font(.system(size: 12)).accessibilityIdentifier("axon-host-ai-rules")
                     inheritedField(store.text("Jump host", "跳板机"), keyPath: \.jumpHost) {
                         if groupDefaults != nil && host.groupInheritance?.jumpHost == true {
                             Text(effectiveHost.jumpHostID.flatMap { id in store.workspace.hosts.first { $0.id == id } }.map { $0.name.isEmpty ? $0.address : $0.name } ?? store.text("None · direct connection", "无 · 直接连接")).frame(maxWidth: .infinity, alignment: .leading).appInput().foregroundStyle(Palette.muted)

@@ -25,6 +25,11 @@ struct TerminalToolsPanel: View {
     @Binding var isVisible: Bool
     var history: CommandHistoryStore = .shared
     let availableHeight: CGFloat
+    var panelWidth: CGFloat = Self.width
+    static func allocatedWidth(selection: String, workspace: CGFloat, preferred: CGFloat = width) -> CGFloat {
+        let desired = preferred.isFinite ? preferred : width
+        return min(max(width, desired), max(width, workspace - 360))
+    }
 
     private var bodyHeight: CGFloat { max(0, availableHeight - Self.headerHeight - 1) }
     private var session: TerminalSession? { store.sessions.first { $0.id == store.activeSession } }
@@ -37,6 +42,9 @@ struct TerminalToolsPanel: View {
                 .frame(height: Self.headerHeight)
                 .background(TerminalChrome.header)
             Rectangle().fill(TerminalChrome.border.opacity(0.7)).frame(height: 1)
+            if selection == "ai" {
+                AIAssistantPane(ai: store.ai, terminal: true, availableHeight: bodyHeight)
+            } else {
             ScrollView(.vertical) {
                 content
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -47,8 +55,9 @@ struct TerminalToolsPanel: View {
             .id(selection)
             .scrollBounceBehavior(.basedOnSize)
             .frame(height: bodyHeight)
+            }
         }
-        .frame(width: Self.width, height: max(0, availableHeight), alignment: .top)
+        .frame(width: panelWidth, height: max(0, availableHeight), alignment: .top)
         .foregroundStyle(TerminalChrome.text)
         .colorScheme(.dark)
         .background(TerminalChrome.background)
@@ -85,6 +94,7 @@ struct TerminalToolsPanel: View {
                 tab("status", icon: "waveform.path.ecg", title: store.text("Status", "状态"), caption: store.text("Status", "状态"))
                 tab("snippets", icon: "curlybraces", title: store.text("Snippets", "代码片段"), caption: store.text("Snippets", "片段"))
                 tab("history", icon: "clock.arrow.circlepath", title: store.text("Command history", "命令历史"), caption: store.text("History", "历史"))
+                tab("ai", icon: "sparkles", title: store.text("AI assistant", "AI 助手"), caption: "AI")
                 tab("theme", icon: "paintpalette", title: store.text("Terminal settings", "终端设置"), caption: store.text("Style", "外观"))
             }.padding(4).background(TerminalChrome.field).clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(TerminalChrome.border.opacity(0.45), lineWidth: 1))
@@ -99,6 +109,8 @@ struct TerminalToolsPanel: View {
 
     @ViewBuilder private var content: some View {
         switch selection {
+        case "ai":
+            AIAssistantPane(ai: store.ai, terminal: true)
         case "history":
             CommandHistoryPanel(history: history)
         case "snippets":
@@ -280,5 +292,39 @@ private final class TerminalPanelActionNativeButton: PreferencesRectNativeButton
         drawText(title, rect: NSRect(x: 12, y: (bounds.height - 15) / 2, width: max(0, bounds.width - 24), height: 17),
                  color: NSColor(TerminalChrome.accent), font: .systemFont(ofSize: 12, weight: .medium))
         drawFocus()
+    }
+}
+
+
+struct TerminalToolsResizeHandle: NSViewRepresentable {
+    let width: CGFloat
+    let label: String
+    let resize: (CGFloat) -> Void
+    func makeNSView(context: Context) -> TerminalToolsResizeView { TerminalToolsResizeView() }
+    func updateNSView(_ view: TerminalToolsResizeView, context: Context) {
+        view.panelWidth = width; view.resize = resize
+        view.setAccessibilityLabel(label); view.setAccessibilityIdentifier("axon-terminal-tools-resize")
+        view.toolTip = label
+    }
+}
+final class TerminalToolsResizeView: NSView {
+    var panelWidth: CGFloat = 320
+    var resize: (CGFloat) -> Void = { _ in }
+    private var originX: CGFloat = 0
+    private var originWidth: CGFloat = 320
+    override var acceptsFirstResponder: Bool { true }
+    override init(frame: NSRect) { super.init(frame: frame); setAccessibilityRole(.splitter); setAccessibilityElement(true) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+    override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self); originX = event.locationInWindow.x; originWidth = panelWidth }
+    override func mouseDragged(with event: NSEvent) { resize(originWidth + originX - event.locationInWindow.x) }
+    override func mouseUp(with event: NSEvent) { mouseDragged(with: event) }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 123 { resize(panelWidth + 20) }
+        else if event.keyCode == 124 { resize(panelWidth - 20) }
+        else { super.keyDown(with: event) }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(TerminalChrome.border).setFill(); NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
     }
 }

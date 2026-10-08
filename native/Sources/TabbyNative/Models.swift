@@ -28,6 +28,8 @@ struct Host: Codable, Identifiable, Hashable {
     var persistentSession: Bool?
     var persistentSessionName: String?
     var favorite = false
+    var aiCommandWhitelist: String?
+    var aiCommandBlacklist: String?
 }
 
 struct VaultCredential: Codable, Identifiable, Equatable {
@@ -279,6 +281,9 @@ enum Secrets {
 }
 
 @MainActor final class AppStore: ObservableObject {
+    lazy var ai = AIAssistant(fileURL: fileURL.deletingLastPathComponent().appendingPathComponent("ai-settings.json"))
+    @Published var aiAnalysisPresented = false
+    @Published var aiTerminalRequest = UUID()
     let monitoring = MonitoringCenter()
     let externalEdits = ExternalEditCenter()
     lazy var batchTasks = BatchTaskCenter(store: self)
@@ -404,6 +409,7 @@ enum Secrets {
         try commitCatalog(updated)
     }
     func upsert(_ host: Host, secret: String, privateKey: String? = nil) throws {
+        try AIExecutionPolicy().mergingCommandLists(host).validate()
         var host = try GroupDefaults.validatedForStorage(host, workspace: workspace, chinese: chinese)
         host.tags = TagTokens.serialized(TagTokens.parse(host.tags))
         var changes: [UUID: Secrets.Value] = [:]

@@ -2,6 +2,18 @@ import Foundation
 import SwiftUI
 import AppKit
 
+enum CommandOrigin: String, Codable, CaseIterable { case ai, human, mixed, unknown
+    func title(chinese: Bool) -> String {
+        switch self { case .ai: return "AI"; case .human: return chinese ? "人工" : "Human"; case .mixed: return chinese ? "AI + 人工" : "AI + Human"; case .unknown: return chinese ? "来源未知" : "Unknown source" }
+    }
+    var symbol: String { self == .ai ? "sparkles" : self == .human ? "person" : self == .mixed ? "person.badge.plus" : "questionmark.circle" }
+}
+struct CommandOriginTracker {
+    private var pending: CommandOrigin?
+    mutating func input(_ source: CommandOrigin) { pending = pending == nil || pending == source ? source : .mixed }
+    mutating func consume() -> CommandOrigin { defer { pending = nil }; return pending ?? .unknown }
+}
+
 struct ExecutedCommand: Codable, Identifiable, Equatable {
     var id = UUID()
     var date = Date()
@@ -12,6 +24,7 @@ struct ExecutedCommand: Codable, Identifiable, Equatable {
     var directory: String?
     var exitCode: Int?
     var duration: Double?
+    var origin: CommandOrigin?
 }
 
 enum CommandHistoryProtocol {
@@ -153,6 +166,7 @@ enum CommandHistoryProtocol {
         let prefix = "axon-command;" + commandHistoryToken + ";"
         guard commandHistoryReady, report.hasPrefix(prefix) else { return true }
         let payload = String(report.dropFirst(prefix.count))
+        if payload == "prompt" { aiShellInput.prompt(); return true }
         let history = commandHistoryStore ?? CommandHistoryStore.shared
         if payload.hasPrefix("meta;") {
             if let id = activeCommandHistoryID, let bytes = Data(base64Encoded: String(payload.dropFirst(5))), bytes.count <= 8192, let path = String(data: bytes, encoding: .utf8), !path.unicodeScalars.contains(where: { $0.value < 32 }) {
@@ -165,12 +179,15 @@ enum CommandHistoryProtocol {
             if fields.count == 3, let code = Int(fields[1]), let seconds = Double(fields[2]), seconds.isFinite, seconds >= 0, seconds <= 31536000, let id = activeCommandHistoryID {
                 if let entry = history.update(id, exitCode: code, duration: seconds), store.workspace.preferences.commandCompletionNotifications, seconds >= 10 { CommandCompletionNotification.send(entry) }
             }
+            if fields.count == 3, let code = Int(fields[1]) { aiShellExitCode = code; aiShellCompletionRevision &+= 1 }
             activeCommandHistoryID = nil; return true
         }
+        aiShellInput.invalidate()
+        let origin = commandOriginTracker.consume()
         guard commandHistoryRecording, let command = CommandHistoryProtocol.decode(report, token: commandHistoryToken), CommandHistoryProtocol.allowed(command) else { activeCommandHistoryID = nil; return true }
         let excluded = store.workspace.preferences.commandHistoryExclusions.components(separatedBy: "\n").filter { !$0.isEmpty }
         guard !excluded.contains(where: { command.localizedCaseInsensitiveContains($0) }) else { activeCommandHistoryID = nil; return true }
-        let entry = ExecutedCommand(hostID: host?.id, hostName: host?.name ?? store.text("Local terminal", "本地终端"), sessionID: id, command: command)
+        let entry = ExecutedCommand(hostID: host?.id, hostName: host?.name ?? store.text("Local terminal", "本地终端"), sessionID: id, command: command, origin: origin)
         history.append(entry, limit: store.workspace.preferences.commandHistoryLimit); activeCommandHistoryID = entry.id
         if let id = transcriptID { store.sessionLogs.marker(entry, report: report, id: id) }
         return true
@@ -241,11 +258,12 @@ struct OperationHistoryView: View {
     @State private var failedOnly = false
     @State private var search = ""
     @State private var clearing = false
+    @State private var originFilter = "all"
     init(history: CommandHistoryStore = .shared, server: String? = nil) {
         _history = ObservedObject(wrappedValue: history); _server = State(initialValue: server)
     }
     private func key(_ entry: ExecutedCommand) -> String { entry.hostID?.uuidString ?? "local" }
-    private var filtered: [ExecutedCommand] { history.entries.filter { (!failedOnly || ($0.exitCode != nil && $0.exitCode != 0)) && (server == nil || key($0) == server) && (search.isEmpty || $0.command.localizedCaseInsensitiveContains(search) || $0.hostName.localizedCaseInsensitiveContains(search)) } }
+    private var filtered: [ExecutedCommand] { history.entries.filter { (originFilter == "all" || ($0.origin ?? .unknown).rawValue == originFilter) && (!failedOnly || ($0.exitCode != nil && $0.exitCode != 0)) && (server == nil || key($0) == server) && (search.isEmpty || $0.command.localizedCaseInsensitiveContains(search) || $0.hostName.localizedCaseInsensitiveContains(search)) } }
     private var servers: [String] { Array(Set(filtered.map(key))).sorted { lhs, rhs in
         (history.entries.first { key($0) == lhs }?.hostName ?? "") < (history.entries.first { key($0) == rhs }?.hostName ?? "")
     } }
@@ -259,7 +277,10 @@ struct OperationHistoryView: View {
                 Button(store.text("Clear all history", "清空全部历史"), role: .destructive) { clearing = true }.buttonStyle(ChromeButtonStyle()).disabled(history.entries.isEmpty)
             }
             Text(store.text("Records Bash/Zsh commands by server. Axon initialization scripts and password input are excluded.", "自动记录 Bash/Zsh 命令，按服务器查看；不记录 Axon 初始化脚本和密码提示中的输入。" )).font(.system(size: 12)).foregroundStyle(Palette.muted)
-            VaultSearchField(placeholder: store.text("Search server or command", "搜索服务器或命令"), text: $search)
+            HStack(spacing: 12) {
+                VaultSearchField(placeholder: store.text("Search server or command", "搜索服务器或命令"), text: $search)
+                AxonChoiceField(selection: $originFilter, choices: [("all", store.text("All sources", "全部来源"))] + CommandOrigin.allCases.map { ($0.rawValue, $0.title(chinese: store.chinese)) }, placeholder: store.text("Command source", "命令来源"), symbol: "line.3.horizontal.decrease.circle", identifier: "axon-history-origin-filter").frame(width: 180)
+            }
             if let error = history.error { Text(error).foregroundStyle(.red) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -290,7 +311,7 @@ struct OperationHistoryView: View {
                             }.padding(14).background(Palette.card).clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
-                    if filtered.isEmpty { ContentUnavailableView(store.text("No operation history", "暂无操作历史"), systemImage: "clock.arrow.circlepath", description: Text(store.text("Open a Bash/Zsh terminal and run a command to see it here.", "打开 Bash/Zsh 终端并执行命令后，可在这里查看。"))) }
+                    if filtered.isEmpty { ContentUnavailableView(store.text("No matching operations", "没有匹配的操作记录"), systemImage: "clock.arrow.circlepath", description: Text(store.text("Change the source, search or failure filter to see other records.", "调整来源、搜索或失败筛选，可查看其他记录。"))) }
                 }
             }
         }.padding(22).appAlert(store.text("Clear all command history?", "清空所有操作历史？"), isPresented: $clearing) {
@@ -309,9 +330,25 @@ struct OperationHistoryView: View {
 }
 
 struct CommandHistoryMetadata: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject var store: AppStore
     let entry: ExecutedCommand
+    private func sourceBadge(_ origin: CommandOrigin) -> some View {
+        let color: Color = origin == .ai ? Palette.accent : origin == .human ? (colorScheme == .dark ? TerminalChrome.text : Palette.blue) : Palette.muted
+        return Label(origin.title(chinese: store.chinese), systemImage: origin.symbol)
+            .font(.system(size: 10, weight: .semibold)).foregroundStyle(color)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(color.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 5))
+    }
     var body: some View {
         HStack(spacing: 8) {
+            if entry.origin == .mixed {
+                HStack(spacing: 4) {
+                    sourceBadge(.ai)
+                    Text("+").foregroundStyle(Palette.muted)
+                    sourceBadge(.human)
+                }
+            } else { sourceBadge(entry.origin ?? .unknown) }
             if let directory = entry.directory { Text(directory).lineLimit(1).help(directory) }
             if let code = entry.exitCode { Text("exit \(code)").foregroundStyle(code == 0 ? .green : .red) }
             if let duration = entry.duration { Text(String(format: "%.1f s", duration)) }

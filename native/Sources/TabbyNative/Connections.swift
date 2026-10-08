@@ -59,9 +59,18 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     @Published var followDirectoryInFiles = false {
         didSet { store.objectWillChange.send() }
     }
+    var commandOriginTracker = CommandOriginTracker()
+    var lastTranscriptOrigin: CommandOrigin?
     @Published var transcriptID: UUID?
     var commandHistoryStore: CommandHistoryStore?
     var commandHistoryToken = ""
+    var aiCommandCapture = AICommandCapture()
+    var aiApplicationCursor = false
+    var aiShellInput = AIShellInput()
+    var aiTerminalInputRevision: UInt64 = 0
+    var aiTerminalOutputRevision: UInt64 = 0
+    var aiShellCompletionRevision: UInt64 = 0
+    var aiShellExitCode: Int?
     var activeCommandHistoryID: UUID?
     var persistentOverride: Bool?
     var persistentNameOverride: String?
@@ -71,6 +80,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     var pendingDirectoryInsertion: (command: String, host: Host?)?
     @Published var connected = false {
         didSet {
+            if !connected { aiCommandCapture = AICommandCapture(); aiApplicationCursor = false; aiShellExitCode = nil }
             if connected != oldValue {
                 store.objectWillChange.send()
                 store.monitoring.connectionsChanged()
@@ -410,7 +420,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
         currentDirectory = nil
         authenticationWindow?.cancel()
         if connected, let host { store.record("ssh", "disconnected", host: host.name) }
-        commandHistoryToken = ""; commandHistoryReady = false; activeCommandHistoryID = nil
+        commandHistoryToken = ""; commandHistoryReady = false; activeCommandHistoryID = nil; commandOriginTracker = CommandOriginTracker(); aiShellInput.invalidate(); lastTranscriptOrigin = nil
         inputTask?.cancel(); inputTask = nil
         commandHistoryStartupTask?.cancel(); commandHistoryStartupTask = nil
         endCommandHistoryBootstrapScreen()
@@ -455,6 +465,7 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
     }
     func writeInput(_ data: [UInt8]) {
         guard connected else { return }
+        aiTerminalInputRevision &+= 1
         let local = terminal as? LocalTerminal
         let bytes = ByteBuffer(bytes: data)
         let previous = inputTask; let startup = commandHistoryStartupTask; let input = writer; let request = generation
@@ -462,9 +473,34 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, @unchecked S
             await previous?.value
             await startup?.value
             guard !Task.isCancelled, request == generation else { return }
-            do { if let local { local.process.send(data: data[...]) } else { try await input?.write(bytes) } }
+            do { self.aiShellInput.input(data); self.recordInputOrigin(.human, bytes: data); if let local { local.process.send(data: data[...]) } else { try await input?.write(bytes) } }
             catch { if request == generation { status = error.localizedDescription } }
         }
+    }
+    /// Preserve input ordering and report transport failures to the task agent.
+    func writeAgentInput(_ data: [UInt8], expectedRevision: UInt64? = nil, expectedCommand: String? = nil) async throws {
+        let previous = inputTask, startup = commandHistoryStartupTask, request = generation
+        let local = terminal as? LocalTerminal, input = writer
+        var failure: Error?
+        let work = Task { @MainActor in
+            do {
+                await previous?.value; await startup?.value
+                try Task.checkCancellation()
+                guard connected, request == generation else { throw AppFailure.message("Terminal changed / 终端已变化") }
+                guard expectedRevision == nil || expectedRevision == aiTerminalInputRevision,
+                      expectedCommand == nil || expectedCommand == aiShellInput.line else { throw AppFailure.message("Terminal input changed before execution / 执行前终端输入已变化，请重新检查命令。") }
+                aiShellInput.input(data)
+                aiTerminalInputRevision &+= 1
+                recordInputOrigin(.ai, bytes: data)
+                if let local { local.process.send(data: data[...]) }
+                else if let input { try await input.write(ByteBuffer(bytes: data)) }
+                else { throw AppFailure.message("Terminal input unavailable / 终端输入不可用") }
+            } catch { failure = error }
+        }
+        inputTask = work
+        await withTaskCancellationHandler(operation: { await work.value }, onCancel: { work.cancel() })
+        try Task.checkCancellation()
+        if let failure { throw failure }
     }
     func writeBootstrapInput(_ bytes: [UInt8]) {
         if let local = terminal as? LocalTerminal { local.process.send(data: bytes[...]) }
@@ -504,7 +540,7 @@ extension Optional {
         TerminalPaste.perform(text, preferences: store?.workspace.preferences ?? Preferences(), confirm: { TerminalPaste.confirm($0, chinese: store?.chinese == true, window: window) }, send: pasteText)
     }
     override func rightMouseDown(with event: NSEvent) {
-        if store?.workspace.preferences.rightClickPaste == true { paste(self) } else { super.rightMouseDown(with: event) }
+        if store?.workspace.preferences.rightClickPaste == true && getSelection()?.isEmpty != false { paste(self) } else { super.rightMouseDown(with: event) }
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)?.copy() as? NSMenu ?? NSMenu()
@@ -512,8 +548,14 @@ extension Optional {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
             let item = NSMenuItem(title: store?.text("Locate selected path in SFTP", "在 SFTP 定位所选路径") ?? "Locate selected path in SFTP", action: #selector(openSelectedPathInFiles), keyEquivalent: "")
             item.target = self; menu.addItem(item)
+            let aiItem = NSMenuItem(title: store?.text("Analyze with AI", "使用 AI 分析") ?? "Analyze with AI", action: #selector(analyzeSelectionWithAI), keyEquivalent: "")
+            aiItem.target = self; menu.addItem(aiItem)
         }
         return menu.items.isEmpty ? nil : menu
+    }
+    @objc private func analyzeSelectionWithAI() {
+        guard let store, let sessionID else { return }
+        store.activeSession = sessionID; store.prepareTerminalAI(selectionOnly: true); store.aiTerminalRequest = UUID()
     }
     @objc private func openSelectedPathInFiles() {
         guard let store, let sessionID else { return }

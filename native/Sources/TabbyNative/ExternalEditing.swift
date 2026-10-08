@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
     @Published var state = "editing"
     @Published var error = ""
     @Published var changed = false
+    @Published var backupPath = ""
     @Published var preview = ""
     @Published var comparison: EditComparison?
     private var original: Data
@@ -117,7 +118,7 @@ import UniformTypeIdentifiers
             try await backend.chmod(temp, metadata.permissions & 0o777)
             let final = try await backend.stat(remotePath)
             guard FileContentDigest.sameMetadata(current, final), try await Self.read(final, from: backend) == original else { throw AppFailure.message("Remote file changed before upload committed / 提交前远端文件已改变") }
-            try await backend.rename(remotePath, backup); backedUp = true
+            try await backend.rename(remotePath, backup); backedUp = true; backupPath = backup
             do { try await backend.rename(temp, remotePath) }
             catch { try? await backend.rename(backup, remotePath); throw error }
             metadata = try await backend.stat(remotePath); original = bytes; changed = false; preview = ""; error = ""; state = "saved"

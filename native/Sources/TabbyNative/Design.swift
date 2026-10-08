@@ -415,3 +415,12 @@ final class FullscreenProbeView: NSView {
     }
     deinit { observations.forEach { NotificationCenter.default.removeObserver($0) } }
 }
+
+struct DismissIconButton: View {
+    var title: String
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) { Image(systemName: "xmark").font(.system(size: 14, weight: .medium)).frame(width: 30, height: 30).contentShape(Rectangle()) }
+            .buttonStyle(.plain).foregroundStyle(Palette.muted).help(title).accessibilityLabel(title)
+    }
+}

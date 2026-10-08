@@ -9,7 +9,7 @@ enum ShellCommandIntegration {
         _axon_history_report() { printf '\033]7;axon-command;__AXON_TOKEN__;%s\007' "$1"; }
         _axon_history_running=0
         _axon_history_emit() { _axon_history_running=1; _axon_history_started=$SECONDS; _axon_history_report "$(_axon_history_b64 "$1")"; _axon_history_report "meta;$(_axon_history_b64 "$PWD")"; }
-        _axon_history_finish() { local _axon_code=$?; if [ "$_axon_history_running" = 1 ]; then _axon_history_report "end;$_axon_code;$((SECONDS-_axon_history_started))"; fi; _axon_history_running=0; return "$_axon_code"; }
+        _axon_history_finish() { local _axon_code=$?; if [ "$_axon_history_running" = 1 ]; then _axon_history_report "end;$_axon_code;$((SECONDS-_axon_history_started))"; fi; _axon_history_running=0; _axon_history_report prompt; return "$_axon_code"; }
         if [ -n "${ZSH_VERSION-}" ]; then
         autoload -Uz add-zsh-hook
         add-zsh-hook -d preexec _axon_history_emit 2>/dev/null

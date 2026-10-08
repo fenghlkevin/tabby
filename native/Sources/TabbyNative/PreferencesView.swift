@@ -2,13 +2,14 @@ import SwiftUI
 import AppKit
 
 enum PreferencesPage: String, CaseIterable, Identifiable {
-    case general, terminal, appearance, keywords, keyboard, connection, importHosts, storage, shortcuts, about
+    case general, terminal, appearance, keywords, keyboard, connection, ai, importHosts, storage, shortcuts, about
     var id: String { rawValue }
     var icon: String {
-        switch self { case .keywords: return "textformat.abc"; case .general: return "gearshape"; case .terminal: return "terminal"; case .appearance: return "paintpalette"; case .keyboard: return "keyboard"; case .connection: return "network"; case .importHosts: return "arrow.up.arrow.down"; case .storage: return "externaldrive.badge.icloud"; case .shortcuts: return "command"; case .about: return "info.circle" }
+        switch self { case .ai: return "sparkles"; case .keywords: return "textformat.abc"; case .general: return "gearshape"; case .terminal: return "terminal"; case .appearance: return "paintpalette"; case .keyboard: return "keyboard"; case .connection: return "network"; case .importHosts: return "arrow.up.arrow.down"; case .storage: return "externaldrive.badge.icloud"; case .shortcuts: return "command"; case .about: return "info.circle" }
     }
     func title(chinese: Bool) -> String {
         switch self {
+        case .ai: return chinese ? "AI 助手" : "AI assistant"
         case .keywords: return chinese ? "关键词规则" : "Keyword rules"
         case .general: return chinese ? "通用" : "General"
         case .terminal: return chinese ? "终端" : "Terminal"
@@ -66,6 +67,7 @@ struct PreferencesView: View {
                         .onChange(of: page) { _, _ in proxy.scrollTo("axon-preferences-heading", anchor: .top) }
                 }
             }
+            if page != .ai {
             Rectangle().fill(Palette.border).frame(height: 1)
             HStack(spacing: 12) {
                 if !error.isEmpty { Text(error).foregroundStyle(.red).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true) }
@@ -74,6 +76,7 @@ struct PreferencesView: View {
                 Button(store.text("Revert", "撤销更改"), action: reload).buttonStyle(ChromeButtonStyle()).disabled(!dirty).accessibilityIdentifier("axon-preferences-revert")
                 Button(store.text("Save", "保存"), action: save).buttonStyle(ChromeButtonStyle(prominent: true)).disabled(!dirty || !validNumbers || ShortcutBinding.validationIssue(draft, chinese: store.chinese) != nil).keyboardShortcut(store.workspace.preferences.shortcut(.saveSettings).keyEquivalent, modifiers: store.workspace.preferences.shortcut(.saveSettings).modifiers).accessibilityIdentifier("axon-preferences-save")
             }.padding(.horizontal, 20).padding(.vertical, 14).background(Palette.sidebar)
+            }
         }.foregroundStyle(Palette.text).font(.system(size: 13)).frame(minWidth: 650, minHeight: 520)
             .onAppear { if !loaded { reload(); loaded = true } }
             .onReceive(NotificationCenter.default.publisher(for: .axonSaveSettingsShortcut)) { notification in
@@ -97,6 +100,7 @@ struct PreferencesView: View {
     }
     private var subtitle: String {
         switch page {
+        case .ai: return store.text("Configure Claude, ChatGPT API or local Codex CLI.", "配置 Claude、ChatGPT 接口或本机 Codex CLI。")
         case .keywords: return store.text("Configurable terminal text highlighting.", "可配置的终端关键词高亮。")
         case .general: return store.text("Application icon, language and local terminal startup.", "程序图标、语言与本地终端启动方式。")
         case .terminal: return store.text("Font, history and cursor behavior.", "字体、历史回滚与光标行为。")
@@ -111,6 +115,7 @@ struct PreferencesView: View {
     }
     @ViewBuilder private func pageContent(scrollToSection: @escaping (String) -> Void) -> some View {
         switch page {
+        case .ai: AISettingsPane(ai: store.ai)
         case .keywords: KeywordRulesPane(draft: $draft)
         case .general: general
         case .terminal: terminal

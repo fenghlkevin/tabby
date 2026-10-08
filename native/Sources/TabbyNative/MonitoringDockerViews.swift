@@ -70,7 +70,7 @@ private struct MonitoringContainerDetail: View {
             MonitoringValue(label: store.text("Block I/O read / write", "磁盘 I/O 读取／写入"), value: "\(MonitoringPresentation.bytes(container.blockReadBytes)) / \(MonitoringPresentation.bytes(container.blockWrittenBytes))")
             MonitoringValue(label: store.text("Processes", "进程"), value: container.pids.map(String.init) ?? "—")
             MonitoringValue(label: store.text("Port mappings", "端口映射"), value: container.ports ?? "—")
-            HStack { Text(store.text("Read-only snapshot", "只读采样")).font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); Button(store.text("Close", "关闭")) { dismiss() }.buttonStyle(ChromeButtonStyle()).keyboardShortcut(.cancelAction) }
+            HStack { Text(store.text("Read-only snapshot", "只读采样")).font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); DismissIconButton(title: store.text("Close", "关闭")) { dismiss() }.keyboardShortcut(.cancelAction) }
         }.padding(24).frame(width: 540).background(Palette.sidebar).foregroundStyle(Palette.text)
     }
 }
